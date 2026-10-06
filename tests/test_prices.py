@@ -35,3 +35,17 @@ def test_naver_listing_paginates_and_drops_etfs():
     assert df["Code"].tolist() == ["005930"]
     assert len(calls) == 2
     assert df.loc[0, "Amount"] == 71000 * 12345678
+
+
+def test_daily_many_keeps_order_and_skips_failures(monkeypatch):
+    import pandas as pd
+
+    def fake_daily(code, start, end=None, cache_dir=None):
+        if code == "BAD":
+            raise ValueError("boom")
+        idx = pd.bdate_range("2025-01-01", periods=2)
+        return pd.DataFrame({"Open": 1.0, "High": 1.0, "Low": 1.0, "Close": 1.0, "Volume": 1.0}, index=idx)
+
+    monkeypatch.setattr(prices, "daily", fake_daily)
+    got = prices.daily_many(["C", "BAD", "A", "B"], "2025-01-01")
+    assert list(got) == ["C", "A", "B"]

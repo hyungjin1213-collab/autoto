@@ -121,17 +121,25 @@ def daily(code, start, end=None, cache_dir=None):
     return df[(df["Volume"] > 0) & (df["Open"] > 0)]
 
 
-def daily_many(codes, start, end=None, cache_dir=None):
-    """{code: daily DataFrame}; stocks that fail to download are skipped."""
+def daily_many(codes, start, end=None, cache_dir=None, workers=8):
+    """{code: daily DataFrame}; stocks that fail to download are skipped.
+
+    Downloads run in parallel threads: each request mostly waits on the network.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     result = {}
-    for i, code in enumerate(codes, 1):
-        try:
-            df = daily(code, start, end, cache_dir)
-        except Exception as e:  # one bad ticker should not stop a 2,500-stock run
-            print(f"  {code} 시세 실패: {e}", file=sys.stderr)
-            continue
-        if not df.empty:
-            result[code] = df
-        if i % 200 == 0:
-            print(f"  시세 {i}/{len(codes)}", file=sys.stderr)
-    return result
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(daily, code, start, end, cache_dir): code for code in codes}
+        for i, future in enumerate(as_completed(futures), 1):
+            code = futures[future]
+            try:
+                df = future.result()
+            except Exception as e:  # one bad ticker should not stop a 2,500-stock run
+                print(f"  {code} 시세 실패: {e}", file=sys.stderr)
+                continue
+            if not df.empty:
+                result[code] = df
+            if i % 200 == 0:
+                print(f"  시세 {i}/{len(codes)}", file=sys.stderr)
+    return {code: result[code] for code in codes if code in result}  # 입력 순서 유지
