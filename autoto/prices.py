@@ -109,15 +109,23 @@ def listing(markets=("KOSPI", "KOSDAQ")):
 
 def daily(code, start, end=None, cache_dir=None):
     """Daily Open/High/Low/Close/Volume indexed by date. Halted days are dropped."""
+    start = pd.Timestamp(start)
     path = Path(cache_dir) / f"{code}.csv" if cache_dir else None
-    if path and path.exists() and time.time() - path.stat().st_mtime < CACHE_MAX_AGE:
+    # 캐시 파일 옆 .start 에 그 파일이 몇 일부터 받은 것인지 적어둡니다.
+    # 더 이른 날짜를 요청하면(예: 8개월치 캐시로 5년 백테스트) 다시 받습니다.
+    marker = path.with_suffix(".start") if path else None
+    fresh = (path and path.exists() and marker.exists()
+             and time.time() - path.stat().st_mtime < CACHE_MAX_AGE
+             and pd.Timestamp(marker.read_text().strip()) <= start)
+    if fresh:
         df = pd.read_csv(path, index_col=0, parse_dates=True)
     else:
         df = _fdr().DataReader(code, start, end)[DAILY_COLUMNS]
         if path:
             path.parent.mkdir(parents=True, exist_ok=True)
             df.to_csv(path)
-    df = df.loc[pd.Timestamp(start):pd.Timestamp(end) if end else None]
+            marker.write_text(start.strftime("%Y-%m-%d"))
+    df = df.loc[start:pd.Timestamp(end) if end else None]
     return df[(df["Volume"] > 0) & (df["Open"] > 0)]
 
 

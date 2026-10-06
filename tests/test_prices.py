@@ -49,3 +49,24 @@ def test_daily_many_keeps_order_and_skips_failures(monkeypatch):
     monkeypatch.setattr(prices, "daily", fake_daily)
     got = prices.daily_many(["C", "BAD", "A", "B"], "2025-01-01")
     assert list(got) == ["C", "A", "B"]
+
+
+def test_daily_cache_refetches_when_earlier_start_requested(tmp_path, monkeypatch):
+    import pandas as pd
+
+    calls = []
+
+    class FakeFdr:
+        @staticmethod
+        def DataReader(code, start, end=None):
+            calls.append(pd.Timestamp(start))
+            idx = pd.bdate_range(start, "2026-09-30")
+            return pd.DataFrame({"Open": 1.0, "High": 1.0, "Low": 1.0, "Close": 1.0, "Volume": 1.0}, index=idx)
+
+    monkeypatch.setattr(prices, "_fdr", lambda: FakeFdr)
+    short = prices.daily("000001", "2026-02-01", cache_dir=tmp_path)
+    again = prices.daily("000001", "2026-05-01", cache_dir=tmp_path)    # 캐시 범위 안 -> 재사용
+    longer = prices.daily("000001", "2021-01-01", cache_dir=tmp_path)   # 캐시보다 이르다 -> 다시 받기
+    assert calls == [pd.Timestamp("2026-02-01"), pd.Timestamp("2021-01-01")]
+    assert again.index[0] == pd.Timestamp("2026-05-01")
+    assert longer.index[0] == pd.Timestamp("2021-01-01") and len(longer) > len(short)
