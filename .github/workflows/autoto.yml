@@ -1,0 +1,112 @@
+name: Autoto
+
+on:
+  schedule:
+    # 평일 07:47 KST (전날 22:47 UTC): 장 시작 전에 전일까지의 데이터로 갱신.
+    - cron: "47 22 * * 0-4"
+  workflow_dispatch:
+    inputs:
+      task:
+        description: "무엇을 실행할까요?"
+        required: true
+        default: daily
+        type: choice
+        options:
+          - daily              # 회전율 + 월봉 후보 + 유상증자
+          - turnover
+          - monthly_screen
+          - monthly_backtest
+          - rights_offering
+      month:
+        description: "monthly_screen: 매수할 달 YYYY-MM (비우면 이번 달)"
+        required: false
+        default: ""
+      years:
+        description: "monthly_backtest: 최근 몇 년"
+        required: false
+        default: "5"
+      days:
+        description: "rights_offering: 최근 며칠"
+        required: false
+        default: "365"
+      extra:
+        description: "월봉 조건 추가 옵션 (예: --min-hit 0.8 --max-range 0.3)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: autoto-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      TASK: ${{ inputs.task || 'daily' }}
+      DART_API_KEY: ${{ secrets.DART_API_KEY }}
+      MONTH: ${{ inputs.month }}
+      YEARS: ${{ inputs.years || '5' }}
+      DAYS: ${{ inputs.days || '365' }}
+      EXTRA: ${{ inputs.extra }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Tests
+        run: python -m pytest -q
+
+      - name: Price cache
+        uses: actions/cache@v4
+        with:
+          path: .cache/prices
+          key: prices-${{ github.run_id }}
+          restore-keys: prices-
+
+      - name: Turnover
+        if: env.TASK == 'daily' || env.TASK == 'turnover'
+        run: python -m autoto.turnover --top 200
+
+      - name: Monthly candle screen
+        if: env.TASK == 'daily' || env.TASK == 'monthly_screen'
+        run: python -m autoto.monthly_candle screen ${MONTH:+--month "$MONTH"} $EXTRA
+
+      - name: Monthly candle backtest
+        if: env.TASK == 'monthly_backtest'
+        run: python -m autoto.monthly_candle backtest --years "$YEARS" $EXTRA
+
+      - name: Rights offering (DART)
+        if: env.TASK == 'daily' || env.TASK == 'rights_offering'
+        run: |
+          if [ -z "$DART_API_KEY" ]; then
+            msg="Settings > Secrets and variables > Actions 에 DART_API_KEY 를 추가하세요."
+            if [ "$TASK" = rights_offering ]; then echo "::error::$msg"; exit 1; fi
+            echo "::warning::유상증자 건너뜀. $msg"; exit 0
+          fi
+          python -m autoto.rights_offering --days "$DAYS"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: autoto-output
+          path: output/
+          if-no-files-found: warn
+
+      - name: Commit results
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f output/
+          if git diff --cached --quiet; then echo "No changes."; exit 0; fi
+          git commit -m "Update autoto output (${TASK})"
+          git pull --rebase origin "${{ github.ref_name }}"
+          git push origin HEAD:"${{ github.ref_name }}"
