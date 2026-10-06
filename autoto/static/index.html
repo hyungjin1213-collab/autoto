@@ -1,0 +1,504 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>autoto 투자 분석</title>
+<style>
+:root {
+  --bg: #f6f7f9; --surface: #ffffff; --surface-2: #f0f2f5; --border: #e2e5ea;
+  --text: #1b1f24; --muted: #5f6b7a; --accent: #2457d6; --accent-soft: #e6edfc;
+  --up: #d23b3b; --down: #2463c9; --ok: #1f8a4c; --warn: #b7791f;
+  --series-1: #2457d6; --series-2: #9aa3af;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111418; --surface: #181c21; --surface-2: #20252c; --border: #2c323a;
+    --text: #e6e9ed; --muted: #97a1ad; --accent: #6f9bff; --accent-soft: #1f2a44;
+    --up: #ff6b6b; --down: #6aa2ff; --ok: #4cc283; --warn: #e0a84a;
+    --series-1: #6f9bff; --series-2: #6b7480;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", sans-serif;
+}
+header {
+  background: var(--surface); border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 10;
+}
+.bar { max-width: 1280px; margin: 0 auto; padding: 12px 16px 0; }
+.brand { display: flex; align-items: baseline; gap: 10px; }
+.brand h1 { font-size: 18px; margin: 0; letter-spacing: -0.01em; }
+.brand span { color: var(--muted); font-size: 13px; }
+nav { display: flex; gap: 4px; margin-top: 10px; overflow-x: auto; }
+nav button {
+  border: 0; background: none; color: var(--muted); font: inherit; font-weight: 600;
+  padding: 8px 12px; border-bottom: 2px solid transparent; cursor: pointer; white-space: nowrap;
+}
+nav button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+main { max-width: 1280px; margin: 0 auto; padding: 20px 16px 48px; }
+section[hidden] { display: none; }
+.card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  padding: 16px; margin-bottom: 16px;
+}
+.card h2 { font-size: 15px; margin: 0 0 4px; }
+.card .sub { color: var(--muted); font-size: 13px; margin: 0 0 12px; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+input, select {
+  font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--border);
+  border-radius: 6px; padding: 6px 10px; min-width: 0;
+}
+input:focus, select:focus, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.btn {
+  font: inherit; font-weight: 600; border-radius: 6px; padding: 7px 14px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--text);
+}
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.search { flex: 1 1 260px; font-size: 15px; padding: 9px 12px; }
+.table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { padding: 7px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; text-align: left; }
+th {
+  background: var(--surface-2); font-weight: 600; color: var(--muted); position: sticky; top: 0;
+  cursor: pointer; user-select: none;
+}
+th.sorted { color: var(--text); }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+tbody tr:hover { background: var(--surface-2); }
+tbody tr:last-child td { border-bottom: 0; }
+.pos { color: var(--up); } .neg { color: var(--down); }
+.yes { color: var(--ok); font-weight: 600; }
+a { color: var(--accent); }
+.empty { color: var(--muted); padding: 24px; text-align: center; border: 1px dashed var(--border); border-radius: 8px; }
+.meta { color: var(--muted); font-size: 12px; }
+.more { margin-top: 8px; }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin-bottom: 14px; }
+.kpi { background: var(--surface-2); border-radius: 8px; padding: 10px 12px; }
+.kpi .label { color: var(--muted); font-size: 12px; }
+.kpi .value { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.kpi .vs { color: var(--muted); font-size: 12px; }
+.legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); margin: 4px 0 6px; }
+.legend i { display: inline-block; width: 12px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 5px; }
+svg text { fill: var(--muted); font-size: 11px; }
+.rules { margin: 0; padding-left: 18px; color: var(--muted); font-size: 13px; }
+.rules b { color: var(--text); font-weight: 600; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+.form { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 12px; }
+.form label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+.log {
+  background: #0d1117; color: #c9d1d9; font: 12px/1.5 var(--mono); border-radius: 8px;
+  padding: 12px; height: 320px; overflow: auto; white-space: pre-wrap; margin: 0;
+}
+.status { font-weight: 600; }
+.status.run { color: var(--warn); } .status.done { color: var(--ok); } .status.fail { color: var(--up); }
+.pill { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); }
+.stock-head { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; margin-bottom: 8px; }
+.stock-head h3 { margin: 0; font-size: 17px; }
+@media (max-width: 600px) { .kpi .value { font-size: 17px; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <div class="brand"><h1>autoto</h1><span>종합 투자 분석</span></div>
+    <nav role="tablist">
+      <button role="tab" data-tab="search" aria-selected="true">종목 검색</button>
+      <button role="tab" data-tab="turnover">회전율</button>
+      <button role="tab" data-tab="monthly">월봉매매</button>
+      <button role="tab" data-tab="backtest">백테스트</button>
+      <button role="tab" data-tab="rights">유상증자</button>
+      <button role="tab" data-tab="run">실행</button>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <section id="tab-search">
+    <div class="card">
+      <h2>종목 한 번에 보기</h2>
+      <p class="sub">종목명이나 종목코드를 입력하면 회전율, 월봉매매 후보 여부, 유상증자 공시를 모아서 보여줍니다.</p>
+      <div class="row"><input id="q" class="search" placeholder="예: 삼성전자, 005930" autocomplete="off"></div>
+      <div id="search-result"></div>
+    </div>
+  </section>
+
+  <section id="tab-turnover" hidden>
+    <div class="card">
+      <h2>회전율 급증 종목</h2>
+      <p class="sub">당일 회전율 상위 종목의 5·20·60일 평균. 급증배수 = 최근 5일 평균 ÷ 60일 평균. <span class="meta" id="meta-turnover_history"></span></p>
+      <div id="t-turnover_history"></div>
+    </div>
+    <div class="card">
+      <h2>당일 회전율 전체 순위</h2>
+      <p class="sub">회전율 = 거래량 ÷ 상장주식수. <span class="meta" id="meta-turnover_today"></span></p>
+      <div id="t-turnover_today"></div>
+    </div>
+  </section>
+
+  <section id="tab-monthly" hidden>
+    <div class="card">
+      <h2>이번 달 월봉매매 후보</h2>
+      <p class="sub"><span class="meta" id="meta-candidates"></span></p>
+      <ul class="rules">
+        <li><b>선별</b>: 직전 6개월 내내 월봉 (고가−시가)/시가 ≥ 5%, 월말 종가 최고/최저 차이 25% 이하(횡보), 일평균 거래대금 1억 이상</li>
+        <li><b>매수</b>: 월초 첫 거래일 시가 · <b>매도</b>: 매일 <b>매도목표가</b>(매수가 +5%, 호가 올림)에 지정가, 못 닿으면 월말 종가</li>
+      </ul>
+      <div style="height:12px"></div>
+      <div id="t-candidates"></div>
+    </div>
+  </section>
+
+  <section id="tab-backtest" hidden>
+    <div class="card">
+      <h2>월봉매매법 백테스트</h2>
+      <p class="sub">매달 이전 달까지의 데이터로만 종목을 고른 결과입니다. 기준선 = 같은 매매를 선별 없이 전 종목에 적용. <span class="meta" id="meta-backtest_summary"></span></p>
+      <div id="bt-kpis"></div>
+      <div id="bt-chart"></div>
+    </div>
+    <div class="grid2">
+      <div class="card"><h2>요약</h2><div id="t-backtest_summary"></div></div>
+      <div class="card"><h2>월별 수익률</h2><div id="t-backtest_monthly"></div></div>
+    </div>
+  </section>
+
+  <section id="tab-rights" hidden>
+    <div class="card">
+      <h2>유상증자 제3자배정 공시</h2>
+      <p class="sub">DART 주요사항보고서 중 증자방식이 제3자배정인 건. <span class="meta" id="meta-rights"></span></p>
+      <div id="t-rights"></div>
+    </div>
+    <div class="card">
+      <h2>배정대상자</h2>
+      <p class="sub">공시 원문 표에서 추출. <span class="meta" id="meta-allottees"></span></p>
+      <div id="t-allottees"></div>
+    </div>
+  </section>
+
+  <section id="tab-run" hidden>
+    <div class="grid2">
+      <div class="card">
+        <h2>분석 실행</h2>
+        <p class="sub">이 컴퓨터에서 시세·공시를 받아 output 폴더를 갱신합니다. 끝나면 화면이 자동으로 새로고침됩니다.</p>
+        <div class="form">
+          <label>회전율 상세 종목 수<input id="p-top" type="number" value="200" min="1"></label>
+          <label>월봉 후보 기준 달<input id="p-month" type="month"></label>
+          <label>백테스트 기간(년)<input id="p-years" type="number" value="5" min="0.5" step="0.5"></label>
+          <label>유상증자 조회(일)<input id="p-days" type="number" value="365" min="1"></label>
+          <label>최소 적중률 (0~1)<input id="p-min_hit" type="number" placeholder="1.0" step="0.05" min="0" max="1"></label>
+          <label>최대 횡보폭 (0~1)<input id="p-max_range" type="number" placeholder="0.25" step="0.05" min="0"></label>
+          <label>목표 수익률<input id="p-target" type="number" placeholder="0.05" step="0.01" min="0"></label>
+          <label>선별 개월 수<input id="p-lookback" type="number" placeholder="6" min="1"></label>
+          <label>DART 인증키<input id="p-dart_key" type="password" placeholder="환경변수에 있으면 비워두기" autocomplete="off"></label>
+        </div>
+        <div class="row">
+          <button class="btn primary" data-run="daily">전체 업데이트</button>
+          <button class="btn" data-run="turnover">회전율</button>
+          <button class="btn" data-run="monthly_screen">월봉 후보</button>
+          <button class="btn" data-run="monthly_backtest">백테스트</button>
+          <button class="btn" data-run="rights_offering">유상증자</button>
+        </div>
+        <p class="meta">백테스트는 전 종목 시세를 받으므로 처음엔 수십 분 걸립니다. 받은 시세는 12시간 동안 재사용합니다.</p>
+      </div>
+      <div class="card">
+        <h2>진행 상황 <span id="run-status" class="status"></span></h2>
+        <pre id="log" class="log">아직 실행한 작업이 없습니다.</pre>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = (s, el = document) => el.querySelector(s);
+const $$ = (s, el = document) => [...el.querySelectorAll(s)];
+const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+let DATA = {};
+
+const HOW_TO = {
+  turnover_today: "실행 탭에서 '회전율'을 실행하세요.",
+  turnover_history: "실행 탭에서 '회전율'을 실행하세요.",
+  candidates: "실행 탭에서 '월봉 후보'를 실행하세요.",
+  backtest_summary: "실행 탭에서 '백테스트'를 실행하세요.",
+  backtest_monthly: "실행 탭에서 '백테스트'를 실행하세요.",
+  rights: "실행 탭에서 DART 인증키를 넣고 '유상증자'를 실행하세요.",
+  allottees: "실행 탭에서 DART 인증키를 넣고 '유상증자'를 실행하세요.",
+};
+
+// ---- 숫자 서식 --------------------------------------------------------------
+const FRACTION = /적중률|상승폭|횡보폭|등락률|수익률|도달률|거래비율|낙폭|^전략$|^기준선$/;
+const MONEY = /거래대금|조달금액/;
+const COUNT = /주식수|거래량|신주|총수|가$|종가|시가|고가|목표가|액면가|배정주식수|선별종목수|거래수/;
+
+function fmtMoney(v) {
+  if (Math.abs(v) >= 1e12) return (v / 1e12).toLocaleString("ko-KR", {maximumFractionDigits: 2}) + "조";
+  return (v / 1e8).toLocaleString("ko-KR", {maximumFractionDigits: 1}) + "억";
+}
+
+function cell(col, v, rowLabel) {
+  if (v === null || v === undefined || v === "") return {html: "–", num: false};
+  if (typeof v === "boolean") return {html: v ? '<span class="yes">도달</span>' : "–", num: false};
+  if (col === "공시링크") return {html: `<a href="${esc(v)}" target="_blank" rel="noopener">원문</a>`, num: false};
+  const key = rowLabel ?? col;
+  if (typeof v === "number") {
+    let text, cls = "";
+    if (/^회전율/.test(key)) text = v.toFixed(2) + "%";
+    else if (/배수/.test(key)) text = v.toFixed(2) + "배";
+    else if (/보유일/.test(key)) text = v.toFixed(1) + "일";
+    else if (/후보있던달/.test(key)) text = v.toLocaleString("ko-KR") + "개월";
+    else if (FRACTION.test(key)) {
+      text = (v * 100).toFixed(Math.abs(v) < 0.1 ? 2 : 1) + "%";
+      if (/수익률|등락률|^전략$|^기준선$/.test(key)) cls = v > 0 ? "pos" : v < 0 ? "neg" : "";
+    }
+    else if (MONEY.test(key)) text = fmtMoney(v);
+    else if (COUNT.test(key) || Number.isInteger(v)) text = Math.round(v).toLocaleString("ko-KR");
+    else text = v.toLocaleString("ko-KR", {maximumFractionDigits: 4});
+    return {html: cls ? `<span class="${cls}">${text}</span>` : text, num: true};
+  }
+  return {html: esc(v), num: false};
+}
+
+// ---- 표 ---------------------------------------------------------------------
+const PAGE = 100;
+
+function renderTable(target, ds, opts = {}) {
+  const el = typeof target === "string" ? $(target) : target;
+  if (!ds) { el.innerHTML = `<div class="empty">아직 결과가 없습니다. ${HOW_TO[opts.name] || ""}</div>`; return; }
+  let rows = opts.filter ? ds.rows.filter(opts.filter) : ds.rows;
+  if (!rows.length) { el.innerHTML = `<div class="empty">${opts.emptyText || "해당하는 행이 없습니다."}</div>`; return; }
+  const cols = ds.columns;
+  const state = {sort: null, dir: 1, limit: opts.limit ?? PAGE, q: ""};
+  const labelCol = opts.rowLabels ? 0 : -1;
+
+  el.innerHTML = (opts.searchable ? `<div class="row"><input class="tq" placeholder="표 안에서 찾기"><span class="meta tcount"></span></div>` : "")
+    + `<div class="table-wrap"><table><thead></thead><tbody></tbody></table></div><div class="more"></div>`;
+
+  function draw() {
+    let view = rows;
+    if (state.q) {
+      const q = state.q.toLowerCase();
+      view = view.filter(r => r.some(v => v !== null && String(v).toLowerCase().includes(q)));
+    }
+    if (state.sort !== null) {
+      const i = state.sort;
+      view = [...view].sort((a, b) => {
+        const x = a[i], y = b[i];
+        if (x === null) return 1; if (y === null) return -1;
+        return (typeof x === "number" && typeof y === "number" ? x - y : String(x).localeCompare(String(y), "ko")) * state.dir;
+      });
+    }
+    const sample = rows.find(r => r) || [];
+    $("thead", el).innerHTML = "<tr>" + cols.map((c, i) =>
+      `<th data-i="${i}" class="${typeof sample[i] === "number" ? "num" : ""} ${state.sort === i ? "sorted" : ""}">${esc(c)}${state.sort === i ? (state.dir > 0 ? " ▲" : " ▼") : ""}</th>`).join("") + "</tr>";
+    $("tbody", el).innerHTML = view.slice(0, state.limit).map(r => "<tr>" + r.map((v, i) => {
+      const c = cell(cols[i], v, labelCol >= 0 && i > 0 ? r[labelCol] : undefined);
+      return `<td class="${c.num ? "num" : ""}">${c.html}</td>`;
+    }).join("") + "</tr>").join("");
+    const more = $(".more", el);
+    more.innerHTML = view.length > state.limit
+      ? `<button class="btn">더 보기 (${state.limit.toLocaleString()} / ${view.length.toLocaleString()})</button>` : "";
+    if (opts.searchable) $(".tcount", el).textContent = `${view.length.toLocaleString()}행`;
+  }
+  el.addEventListener("click", e => {
+    const th = e.target.closest("th");
+    if (th) {
+      const i = +th.dataset.i;
+      state.dir = state.sort === i ? -state.dir : (typeof rows[0][i] === "number" ? -1 : 1);
+      state.sort = i; draw();
+    }
+    if (e.target.closest(".more button")) { state.limit += PAGE * 2; draw(); }
+  });
+  if (opts.searchable) $(".tq", el).addEventListener("input", e => { state.q = e.target.value.trim(); state.limit = opts.limit ?? PAGE; draw(); });
+  draw();
+}
+
+function colIndex(ds, name) { return ds ? ds.columns.indexOf(name) : -1; }
+
+// ---- 백테스트 ---------------------------------------------------------------
+function renderBacktest() {
+  const s = DATA.backtest_summary, m = DATA.backtest_monthly;
+  const kpis = $("#bt-kpis"), chart = $("#bt-chart");
+  if (!s || !m) { kpis.innerHTML = `<div class="empty">아직 결과가 없습니다. ${HOW_TO.backtest_summary}</div>`; chart.innerHTML = ""; return; }
+  const get = (label, col) => { const r = s.rows.find(r => r[0] === label); return r ? r[s.columns.indexOf(col)] : null; };
+  const pct = v => v === null ? "–" : (v * 100).toFixed(1) + "%";
+  const items = [["누적수익률", "누적수익률"], ["목표도달률", "목표 +5% 도달률"], ["평균수익률", "거래당 평균수익률"], ["최대낙폭", "최대낙폭"]];
+  kpis.innerHTML = `<div class="kpis">` + items.map(([k, label]) => {
+    const a = get(k, "전략(선별)"), b = get(k, "기준선(전종목)");
+    return `<div class="kpi"><div class="label">${label}</div><div class="value">${pct(a)}</div><div class="vs">기준선 ${pct(b)}</div></div>`;
+  }).join("") + `<div class="kpi"><div class="label">거래 수</div><div class="value">${(get("거래수", "전략(선별)") ?? 0).toLocaleString()}</div><div class="vs">${esc(get("기간", "전략(선별)") || "")}</div></div></div>`;
+
+  const iS = colIndex(m, "전략"), iB = colIndex(m, "기준선");
+  const months = m.rows.map(r => r[0]);
+  const curve = i => { let e = 1; return m.rows.map(r => (e *= 1 + (r[i] ?? 0)) - 1); };
+  const a = curve(iS), b = curve(iB);
+  const W = 900, H = 260, L = 48, R = 12, T = 12, B = 28;
+  const rawLo = Math.min(0, ...a, ...b), rawHi = Math.max(0, ...a, ...b);
+  const rough = (rawHi - rawLo || 0.1) / 4, mag = 10 ** Math.floor(Math.log10(rough));
+  const tick = [1, 2, 2.5, 5, 10].map(f => f * mag).find(t => t >= rough);
+  const lo = Math.floor(rawLo / tick) * tick, hi = Math.ceil(rawHi / tick) * tick;
+  const span = hi - lo;
+  const x = i => L + (W - L - R) * (months.length > 1 ? i / (months.length - 1) : 0.5);
+  const y = v => T + (H - T - B) * (1 - (v - lo) / span);
+  const path = arr => arr.map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join("");
+  const ticks = Array.from({length: Math.round(span / tick) + 1}, (_, k) => lo + tick * k);
+  const step = Math.max(1, Math.ceil(months.length / 8));
+  chart.innerHTML = `<div class="legend"><span><i style="background:var(--series-1)"></i>전략(선별)</span><span><i style="background:var(--series-2)"></i>기준선(전종목)</span></div>
+  <svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="누적수익률 추이">
+    ${ticks.map(t => `<line x1="${L}" x2="${W - R}" y1="${y(t)}" y2="${y(t)}" stroke="var(--border)"/><text x="${L - 6}" y="${y(t) + 4}" text-anchor="end">${+(t * 100).toFixed(1)}%</text>`).join("")}
+    <line x1="${L}" x2="${W - R}" y1="${y(0)}" y2="${y(0)}" stroke="var(--muted)" stroke-width="1"/>
+    ${months.map((mo, i) => {
+      const last = i === months.length - 1;
+      if (!last && (i % step || months.length - 1 - i < step / 2)) return "";
+      return `<text x="${x(i)}" y="${H - 8}" text-anchor="${last ? "end" : i ? "middle" : "start"}">${esc(mo)}</text>`;
+    }).join("")}
+    <path d="${path(b)}" fill="none" stroke="var(--series-2)" stroke-width="2"/>
+    <path d="${path(a)}" fill="none" stroke="var(--series-1)" stroke-width="2.5"/>
+  </svg>`;
+}
+
+// ---- 종목 검색 --------------------------------------------------------------
+function rowsMatching(ds, test) { return ds ? {...ds, rows: ds.rows.filter(test)} : null; }
+
+function renderSearch() {
+  const q = $("#q").value.trim();
+  const out = $("#search-result");
+  if (!q) {
+    const n = k => DATA[k] ? DATA[k].rows.length.toLocaleString() : "0";
+    out.innerHTML = `<div class="kpis">
+      <div class="kpi"><div class="label">회전율 집계 종목</div><div class="value">${n("turnover_today")}</div><div class="vs">${DATA.turnover_today?.updated || "결과 없음"}</div></div>
+      <div class="kpi"><div class="label">이번 달 월봉 후보</div><div class="value">${n("candidates")}</div><div class="vs">${DATA.candidates?.updated || "결과 없음"}</div></div>
+      <div class="kpi"><div class="label">제3자배정 공시</div><div class="value">${n("rights")}</div><div class="vs">${DATA.rights?.updated || "결과 없음"}</div></div>
+    </div>`;
+    return;
+  }
+  const ql = q.toLowerCase();
+  const matcher = (ds, codeCol, nameCol) => {
+    const ic = colIndex(ds, codeCol), iname = colIndex(ds, nameCol);
+    return r => (ic >= 0 && r[ic] === q) || (iname >= 0 && r[iname] && String(r[iname]).toLowerCase().includes(ql));
+  };
+  // 이름이 비슷한 종목이 많으면 목록부터 보여줍니다.
+  const listing = DATA.turnover_today;
+  const stocks = new Map();
+  const collect = (ds, codeCol, nameCol) => {
+    if (!ds) return;
+    const ic = colIndex(ds, codeCol), iname = colIndex(ds, nameCol);
+    ds.rows.filter(matcher(ds, codeCol, nameCol)).forEach(r => {
+      const key = (ic >= 0 && r[ic]) || r[iname];
+      if (!stocks.has(key)) stocks.set(key, {code: ic >= 0 ? r[ic] : "", name: r[iname]});
+    });
+  };
+  collect(listing, "종목코드", "종목명");
+  collect(DATA.candidates, "종목코드", "종목명");
+  collect(DATA.rights, "종목코드", "회사명");
+  if (!stocks.size) { out.innerHTML = `<div class="empty">'${esc(q)}' 에 해당하는 종목이 없습니다.</div>`; return; }
+
+  const list = [...stocks.values()].slice(0, 12);
+  out.innerHTML = list.map((s, k) => `<div class="card" style="background:var(--surface-2)" id="st-${k}">
+      <div class="stock-head"><h3>${esc(s.name || "")}</h3><span class="meta">${esc(s.code || "")}</span><span class="badges"></span></div>
+      <div class="s-turn"></div><div class="s-cand"></div><div class="s-rights"></div></div>`).join("")
+    + (stocks.size > list.length ? `<p class="meta">${stocks.size}개 중 ${list.length}개만 표시합니다. 더 정확히 입력하세요.</p>` : "");
+
+  list.forEach((s, k) => {
+    const box = $(`#st-${k}`);
+    const same = (ds, codeCol, nameCol) => {
+      const ic = colIndex(ds, codeCol), iname = colIndex(ds, nameCol);
+      return r => s.code ? (ic >= 0 && r[ic] === s.code) : (iname >= 0 && r[iname] === s.name);
+    };
+    const badges = [];
+    const hist = rowsMatching(DATA.turnover_history, same(DATA.turnover_history, "종목코드", "종목명"));
+    const today = rowsMatching(DATA.turnover_today, same(DATA.turnover_today, "종목코드", "종목명"));
+    const turn = hist && hist.rows.length ? hist : today;
+    if (turn && turn.rows.length) {
+      $(".s-turn", box).innerHTML = `<p class="sub" style="margin:8px 0 6px">회전율</p>`;
+      const d = document.createElement("div"); $(".s-turn", box).append(d); renderTable(d, turn);
+    }
+    const cand = rowsMatching(DATA.candidates, same(DATA.candidates, "종목코드", "종목명"));
+    if (cand && cand.rows.length) {
+      badges.push('<span class="pill">월봉매매 후보</span>');
+      $(".s-cand", box).innerHTML = `<p class="sub" style="margin:12px 0 6px">월봉매매 후보</p>`;
+      const d = document.createElement("div"); $(".s-cand", box).append(d); renderTable(d, cand);
+    }
+    const rights = rowsMatching(DATA.rights, same(DATA.rights, "종목코드", "회사명"));
+    if (rights && rights.rows.length) {
+      badges.push(`<span class="pill">제3자배정 ${rights.rows.length}건</span>`);
+      const keep = ["접수일", "증자방식", "신주_보통주", "조달금액_합계", "자금용도", "배정대상자", "공시링크"].map(c => colIndex(rights, c)).filter(i => i >= 0);
+      const slim = {columns: keep.map(i => rights.columns[i]), rows: rights.rows.map(r => keep.map(i => r[i]))};
+      $(".s-rights", box).innerHTML = `<p class="sub" style="margin:12px 0 6px">유상증자 제3자배정</p>`;
+      const d = document.createElement("div"); $(".s-rights", box).append(d); renderTable(d, slim);
+    }
+    if (!badges.length && !(turn && turn.rows.length)) $(".s-turn", box).innerHTML = `<p class="meta">분석 결과에 이 종목이 없습니다.</p>`;
+    $(".badges", box).innerHTML = badges.join(" ");
+  });
+}
+
+// ---- 데이터 불러오기 ---------------------------------------------------------
+async function loadData() {
+  DATA = await (await fetch("/api/data")).json();
+  for (const [name, ds] of Object.entries(DATA)) {
+    const meta = $(`#meta-${name}`);
+    if (meta) meta.textContent = ds ? `갱신 ${ds.updated}` : "";
+  }
+  renderTable("#t-turnover_history", DATA.turnover_history, {name: "turnover_history", searchable: true});
+  renderTable("#t-turnover_today", DATA.turnover_today, {name: "turnover_today", searchable: true});
+  renderTable("#t-candidates", DATA.candidates, {name: "candidates", searchable: true,
+    emptyText: "이번 달 조건에 맞는 종목이 없습니다. 실행 탭에서 조건을 완화해 보세요 (예: 최소 적중률 0.8)."});
+  renderTable("#t-backtest_summary", DATA.backtest_summary, {name: "backtest_summary", rowLabels: true});
+  renderTable("#t-backtest_monthly", DATA.backtest_monthly, {name: "backtest_monthly", limit: 240});
+  renderTable("#t-rights", DATA.rights, {name: "rights", searchable: true});
+  renderTable("#t-allottees", DATA.allottees, {name: "allottees", searchable: true});
+  renderBacktest();
+  renderSearch();
+}
+
+// ---- 탭 ---------------------------------------------------------------------
+function showTab(name) {
+  $$("nav button").forEach(b => b.setAttribute("aria-selected", b.dataset.tab === name));
+  $$("main > section").forEach(s => s.hidden = s.id !== "tab-" + name);
+  try { localStorage.setItem("autoto-tab", name); } catch (e) {}
+}
+$$("nav button").forEach(b => b.addEventListener("click", () => showTab(b.dataset.tab)));
+try { const t = localStorage.getItem("autoto-tab"); if (t && $(`#tab-${t}`)) showTab(t); } catch (e) {}
+
+let searchTimer;
+$("#q").addEventListener("input", () => { clearTimeout(searchTimer); searchTimer = setTimeout(renderSearch, 200); });
+
+// ---- 실행 -------------------------------------------------------------------
+const TASK_NAMES = {daily: "전체 업데이트", turnover: "회전율", monthly_screen: "월봉 후보", monthly_backtest: "백테스트", rights_offering: "유상증자"};
+let wasRunning = false;
+
+function showStatus(st) {
+  const el = $("#run-status");
+  if (st.running) { el.textContent = `${TASK_NAMES[st.task] || st.task} 실행 중 (${st.started} 시작)`; el.className = "status run"; }
+  else if (st.task) { el.textContent = st.returncode === 0 ? `${TASK_NAMES[st.task]} 완료` : `${TASK_NAMES[st.task]} 실패`; el.className = "status " + (st.returncode === 0 ? "done" : "fail"); }
+  if (st.log.length) { const log = $("#log"); log.textContent = st.log.join("\n"); log.scrollTop = log.scrollHeight; }
+  $$("[data-run]").forEach(b => b.disabled = st.running);
+  if (st.has_dart_key !== undefined) $("#p-dart_key").placeholder = st.has_dart_key ? "환경변수 키 사용 중" : "opendart.fss.or.kr 에서 발급";
+  if (wasRunning && !st.running) loadData();
+  wasRunning = st.running;
+}
+
+async function poll() {
+  try { showStatus(await (await fetch("/api/status")).json()); } catch (e) {}
+  setTimeout(poll, wasRunning ? 1500 : 5000);
+}
+
+$$("[data-run]").forEach(b => b.addEventListener("click", async () => {
+  const params = {};
+  ["top", "month", "years", "days", "min_hit", "max_range", "target", "lookback", "dart_key"].forEach(k => {
+    const v = $("#p-" + k).value.trim(); if (v) params[k] = v;
+  });
+  const res = await fetch("/api/run", {method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({task: b.dataset.run, params})});
+  const body = await res.json();
+  if (!res.ok) { alert(body.error); return; }
+  wasRunning = true; showStatus(body);
+}));
+
+loadData();
+poll();
+</script>
+</body>
+</html>
