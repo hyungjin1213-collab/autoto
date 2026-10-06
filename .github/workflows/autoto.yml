@@ -17,6 +17,7 @@ on:
           - monthly_screen
           - monthly_backtest
           - rights_offering
+          - publish_only       # 분석 없이 홈페이지만 다시 올리기
       month:
         description: "monthly_screen: 매수할 달 YYYY-MM (비우면 이번 달)"
         required: false
@@ -36,6 +37,8 @@ on:
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
 
 concurrency:
   group: autoto-${{ github.ref }}
@@ -95,13 +98,25 @@ jobs:
           fi
           python -m autoto.rights_offering --days "$DAYS"
 
+      # 아래 단계들은 앞의 분석 하나가 실패해도 실행해서, 성공한 결과까지는 홈페이지에 올립니다.
       - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
         with:
           name: autoto-output
           path: output/
           if-no-files-found: warn
 
+      - name: Build homepage
+        if: ${{ !cancelled() }}
+        run: python -m autoto.web --export _site
+
+      - uses: actions/upload-pages-artifact@v3
+        if: ${{ !cancelled() }}
+        with:
+          path: _site
+
       - name: Commit results
+        if: ${{ !cancelled() }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -110,3 +125,14 @@ jobs:
           git commit -m "Update autoto output (${TASK})"
           git pull --rebase origin "${{ github.ref_name }}"
           git push origin HEAD:"${{ github.ref_name }}"
+
+  pages:
+    needs: run
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4

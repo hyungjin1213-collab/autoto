@@ -40,7 +40,7 @@ nav button {
 }
 nav button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
 main { max-width: 1280px; margin: 0 auto; padding: 20px 16px 48px; }
-section[hidden] { display: none; }
+[hidden] { display: none !important; }
 .card {
   background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
   padding: 16px; margin-bottom: 16px;
@@ -180,7 +180,16 @@ svg text { fill: var(--muted); font-size: 11px; }
   </section>
 
   <section id="tab-run" hidden>
-    <div class="grid2">
+    <div class="card" id="static-run" hidden>
+      <h2>분석 실행</h2>
+      <p class="sub">이 페이지는 GitHub가 매일 평일 아침 07:47에 자동으로 갱신합니다. 바로 다시 돌리거나 조건을 바꾸려면:</p>
+      <ol class="rules">
+        <li><a id="actions-link" target="_blank" rel="noopener">GitHub Actions의 Autoto</a>를 열고 <b>Run workflow</b>를 누릅니다.</li>
+        <li><b>task</b>를 고릅니다: daily(전체), monthly_backtest(백테스트) 등. 조건은 <b>extra</b> 칸에 <code>--min-hit 0.8</code>처럼 넣습니다.</li>
+        <li>끝나면(백테스트는 수십 분) 이 페이지가 새 결과로 바뀝니다.</li>
+      </ol>
+    </div>
+    <div class="grid2" id="local-run">
       <div class="card">
         <h2>분석 실행</h2>
         <p class="sub">이 컴퓨터에서 시세·공시를 받아 output 폴더를 갱신합니다. 끝나면 화면이 자동으로 새로고침됩니다.</p>
@@ -435,8 +444,30 @@ function renderSearch() {
 }
 
 // ---- 데이터 불러오기 ---------------------------------------------------------
+// 내 컴퓨터(python -m autoto.web)에서는 /api/data, GitHub Pages 에서는 함께 올라간 data.json 을 읽습니다.
+let STATIC = false;
+
+async function fetchData() {
+  try {
+    const res = await fetch("/api/data");
+    if (res.ok && (res.headers.get("Content-Type") || "").includes("json")) return await res.json();
+  } catch (e) {}
+  STATIC = true;
+  const res = await fetch("data.json", {cache: "no-store"});
+  return res.ok ? await res.json() : {};
+}
+
+function setupStatic() {
+  $("#local-run").hidden = true;
+  $("#static-run").hidden = false;
+  const owner = location.hostname.split(".")[0], repo = location.pathname.split("/").filter(Boolean)[0];
+  $("#actions-link").href = location.hostname.endsWith("github.io") && repo
+    ? `https://github.com/${owner}/${repo}/actions/workflows/autoto.yml` : "https://github.com";
+}
+
 async function loadData() {
-  DATA = await (await fetch("/api/data")).json();
+  DATA = await fetchData();
+  if (STATIC) setupStatic();
   for (const [name, ds] of Object.entries(DATA)) {
     const meta = $(`#meta-${name}`);
     if (meta) meta.textContent = ds ? `갱신 ${ds.updated}` : "";
@@ -497,8 +528,7 @@ $$("[data-run]").forEach(b => b.addEventListener("click", async () => {
   wasRunning = true; showStatus(body);
 }));
 
-loadData();
-poll();
+loadData().then(() => { if (!STATIC) poll(); });
 </script>
 </body>
 </html>

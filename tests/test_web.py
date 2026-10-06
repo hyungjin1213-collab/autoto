@@ -95,3 +95,12 @@ def test_http_api(tmp_path):
         assert e.value.code == 400
     finally:
         server.shutdown()
+
+
+def test_export_site(tmp_path):
+    out = tmp_path / "output"
+    write(out / "monthly_candle/candidates.csv", "종목코드,종목명\n000021,에이\n")
+    site = web.export_site(tmp_path / "_site", out)
+    data = json.loads((site / "data.json").read_text(encoding="utf-8"))
+    assert data["candidates"]["rows"] == [["000021", "에이"]]
+    assert (site / "index.html").read_text(encoding="utf-8").startswith("<!doctype html>")

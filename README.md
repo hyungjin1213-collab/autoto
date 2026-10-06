@@ -11,6 +11,18 @@ GitHub Actions가 평일 아침마다 돌려서 결과 CSV를 `output/`에 커�
 
 CSV는 UTF-8 BOM이라 엑셀에서 바로 열립니다.
 
+## 홈페이지 (설치 없이)
+
+**https://hyungjin1213-collab.github.io/autoto/**
+
+GitHub Actions가 분석을 돌릴 때마다 이 주소를 새 결과로 갱신합니다. 파이썬 설치가 필요 없습니다.
+처음 한 번만 설정이 필요합니다:
+
+1. 저장소 **Settings → Pages → Build and deployment → Source** 를 **GitHub Actions** 로 바꿉니다.
+2. **Actions → Autoto → Run workflow** (task: `daily`) 를 한 번 실행합니다.
+
+저장소가 공개(public)라 이 페이지도 누구나 볼 수 있습니다.
+
 ## 홈페이지 (내 컴퓨터에서)
 
 ```bash

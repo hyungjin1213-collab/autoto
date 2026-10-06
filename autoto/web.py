@@ -2,6 +2,7 @@
 
   python -m autoto.web            # http://127.0.0.1:8000 이 자동으로 열립니다
   python -m autoto.web --port 8080 --no-browser
+  python -m autoto.web --export _site     # GitHub Pages 용 정적 사이트
 
 이 컴퓨터(127.0.0.1)에서만 접속됩니다. 결과는 output/ 폴더의 CSV를 그대로 읽습니다.
 """
@@ -220,11 +221,26 @@ def make_handler(runner, output_dir):
     return Handler
 
 
+def export_site(site_dir, output_dir=OUTPUT_DIR):
+    """GitHub Pages 용 정적 사이트: index.html + data.json (파이썬 없이 열람)."""
+    site_dir = Path(site_dir)
+    site_dir.mkdir(parents=True, exist_ok=True)
+    (site_dir / "index.html").write_bytes(INDEX_HTML.read_bytes())
+    data = json.dumps(load_all(output_dir), ensure_ascii=False, separators=(",", ":"))
+    (site_dir / "data.json").write_text(data, encoding="utf-8")
+    (site_dir / ".nojekyll").write_text("")
+    return site_dir
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--port", type=int, default=8000)
     ap.add_argument("--no-browser", action="store_true")
+    ap.add_argument("--export", type=Path, metavar="DIR", help="서버 대신 정적 사이트를 DIR 에 만듭니다 (GitHub Pages)")
     args = ap.parse_args(argv)
+    if args.export:
+        print(f"정적 사이트: {export_site(args.export)}")
+        return
 
     server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(Runner(), OUTPUT_DIR))
     url = f"http://127.0.0.1:{args.port}"
