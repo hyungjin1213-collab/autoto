@@ -120,6 +120,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [ ! -d output ]; then echo "No output."; exit 0; fi
           git add -f output/
           if git diff --cached --quiet; then echo "No changes."; exit 0; fi
           git commit -m "Update autoto output (${TASK})"
