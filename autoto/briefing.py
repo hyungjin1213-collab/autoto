@@ -43,8 +43,9 @@ HOMEPAGE = "https://hyungjin1213-collab.github.io/autoto/"
 KST = dt.timezone(dt.timedelta(hours=9))
 FCHART = "https://fchart.stock.naver.com/sise.nhn?timeframe=day&count={count}&requestType=0&symbol={symbol}"
 # 네이버 증권(새 사이트)이 쓰는 JSON. kind = industry(업종) / theme(테마)
-GROUPS_URL = "https://m.stock.naver.com/api/stocks/{kind}?page=1&pageSize=300"
-GROUP_STOCKS_URL = "https://m.stock.naver.com/api/stocks/{kind}/{no}?page=1&pageSize=100"
+# pageSize 는 너무 크면 400 오류가 나서 50씩 여러 페이지로 받습니다.
+GROUPS_URL = "https://m.stock.naver.com/api/stocks/{kind}?page={page}&pageSize=50"
+GROUP_STOCKS_URL = "https://m.stock.naver.com/api/stocks/{kind}/{no}?page=1&pageSize=50"
 TELEGRAM_LIMIT = 4000  # 텔레그램 한 메시지 최대 4096자
 
 
@@ -123,8 +124,14 @@ def fetch_json(url):
 
 def leading_groups(kind="industry", fetch=fetch_json, top=5, stocks_per_group=3, min_count=5):
     """등락률 상위 업종(또는 테마)과 각 그룹의 거래대금 상위 종목."""
-    groups = [g for g in parse_groups(fetch(GROUPS_URL.format(kind=kind)))
-              if g["change"] is not None and g["count"] >= min_count]
+    groups, page = [], 1
+    while page <= 20:
+        data = fetch(GROUPS_URL.format(kind=kind, page=page))
+        groups += parse_groups(data)
+        if not data.get("groups") or len(groups) >= int(data.get("totalCount") or 0):
+            break
+        page += 1
+    groups = [g for g in groups if g["change"] is not None and g["count"] >= min_count]
     if not groups:
         raise RuntimeError(f"네이버 {kind} 목록이 비어 있습니다")
     groups.sort(key=lambda g: g["change"], reverse=True)

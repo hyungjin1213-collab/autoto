@@ -56,19 +56,29 @@ def test_parse_groups_and_stocks():
 def test_leading_groups_skips_tiny_groups_and_orders_leaders_by_amount():
     urls = []
 
+    # 4개 그룹을 2페이지로 나눠 응답
+    page1 = {**GROUPS, "groups": GROUPS["groups"][:2], "totalCount": 4}
+    page2 = {**GROUPS, "groups": GROUPS["groups"][2:], "totalCount": 4}
+
     def fetch(url):
         urls.append(url)
-        return GROUPS if url == briefing.GROUPS_URL.format(kind="theme") else GROUP_STOCKS
+        if "/theme?page=1" in url:
+            return page1
+        if "/theme?page=2" in url:
+            return page2
+        return GROUP_STOCKS
 
     got = briefing.leading_groups("theme", fetch=fetch, top=2)
     assert [g["name"] for g in got] == ["반도체와반도체장비", "은행"]  # 1종목짜리 문구류 제외
     assert [x["name"] for x in got[0]["leaders"]] == ["삼성전자", "SK하이닉스", "한미반도체"]
-    assert urls[1] == "https://m.stock.naver.com/api/stocks/theme/278?page=1&pageSize=100"
+    assert urls[:3] == ["https://m.stock.naver.com/api/stocks/theme?page=1&pageSize=50",
+                        "https://m.stock.naver.com/api/stocks/theme?page=2&pageSize=50",
+                        "https://m.stock.naver.com/api/stocks/theme/278?page=1&pageSize=50"]
 
 
 def test_leading_groups_fails_on_empty_list():
     with pytest.raises(RuntimeError):
-        briefing.leading_groups(fetch=lambda url: {"groups": []})
+        briefing.leading_groups(fetch=lambda url: {"groups": [], "totalCount": 0})
 
 
 def test_rsi_extremes():
