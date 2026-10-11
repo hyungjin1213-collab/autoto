@@ -56,7 +56,8 @@ def http_get(url, encoding="euc-kr", tries=3):
         try:
             r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
             r.raise_for_status()
-            return r.content.decode(encoding, errors="replace")
+            declared = re.search(r"charset=([\w-]+)", r.headers.get("content-type", ""))
+            return r.content.decode(declared.group(1) if declared else encoding, errors="replace")
         except Exception:
             if attempt == tries - 1:
                 raise
@@ -145,8 +146,12 @@ def leading_sectors(fetch=http_get, top=5, stocks_per_sector=3, min_count=5):
     if not parsed:  # 네이버가 페이지 구조를 바꾸면 여기서 알 수 있게 단서를 남깁니다
         title = re.search(r"<title>(.*?)</title>", page, re.S | re.I)
         links = re.findall(r'href="([^"]*(?:upjong|group)[^"]*)"', page)[:3]
+        apis = sorted(set(re.findall(r"[\w./:-]*api[\w./?=&{}:-]{0,80}", page)))[:25]
+        at = page.find("반도체")
         raise RuntimeError(f"업종 목록을 읽지 못했습니다 (길이 {len(page)}, 제목 {title and title.group(1).strip()!r}, "
-                           f"링크 {links}, 표 {re.findall(r'<table[^>]*>', page)[:3]})")
+                           f"링크 {links}, 표 {re.findall(r'<table[^>]*>', page)[:3]}, "
+                           f"NEXT_DATA {'__NEXT_DATA__' in page}, api {apis}, "
+                           f"반도체 주변 {page[max(at - 300, 0):at + 300] if at >= 0 else None!r})")
     sectors = [s for s in parsed if s["change"] is not None and s["count"] >= min_count]
     sectors.sort(key=lambda s: s["change"], reverse=True)
     for s in sectors[:top]:
