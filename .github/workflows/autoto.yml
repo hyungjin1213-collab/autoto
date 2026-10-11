@@ -2,8 +2,11 @@ name: Autoto
 
 on:
   schedule:
-    # 평일 07:47 KST (전날 22:47 UTC): 장 시작 전에 전일까지의 데이터로 갱신.
-    - cron: "47 22 * * 0-4"
+    # 평일 06:47 KST (전날 21:47 UTC): 장 시작 전에 전일까지의 데이터로 갱신 + 아침 브리핑.
+    # GitHub 예약 실행은 붐비면 수십 분~몇 시간 늦게 시작하므로 여유 있게 잡습니다.
+    - cron: "47 21 * * 0-4"
+    # 평일 16:07 KST (07:07 UTC): 장 마감 브리핑만.
+    - cron: "7 7 * * 1-5"
   workflow_dispatch:
     inputs:
       task:
@@ -17,6 +20,7 @@ on:
           - monthly_screen
           - monthly_backtest
           - rights_offering
+          - briefing           # 텔레그램 시황 브리핑만 (장 마감용)
           - publish_only       # 분석 없이 홈페이지만 다시 올리기
       month:
         description: "monthly_screen: 매수할 달 YYYY-MM (비우면 이번 달)"
@@ -49,8 +53,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 240
     env:
-      TASK: ${{ inputs.task || 'daily' }}
+      TASK: ${{ inputs.task || (github.event.schedule == '7 7 * * 1-5' && 'briefing') || 'daily' }}
       DART_API_KEY: ${{ secrets.DART_API_KEY }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       MONTH: ${{ inputs.month }}
       YEARS: ${{ inputs.years || '5' }}
       DAYS: ${{ inputs.days || '365' }}
@@ -87,6 +93,19 @@ jobs:
       - name: Monthly candle backtest
         if: env.TASK == 'monthly_backtest'
         run: python -m autoto.monthly_candle backtest --years "$YEARS" $EXTRA
+
+      # 브리핑은 오래 걸리는 1년치 유상증자 수집보다 먼저 보냅니다. 새 공시는 최근 며칠만 따로 조회.
+      - name: Recent rights offerings (for briefing)
+        if: ${{ !cancelled() && (env.TASK == 'daily' || env.TASK == 'briefing') && env.DART_API_KEY != '' }}
+        continue-on-error: true
+        run: python -m autoto.rights_offering --days 4 --out .cache/rights_recent
+
+      - name: Telegram briefing
+        if: ${{ !cancelled() && (env.TASK == 'daily' || env.TASK == 'briefing') }}
+        continue-on-error: true
+        run: |
+          python -m autoto.briefing --session ${{ env.TASK == 'briefing' && 'close' || 'morning' }} \
+            --rights-csv .cache/rights_recent/third_party_allotments.csv
 
       - name: Rights offering (DART)
         if: env.TASK == 'daily' || env.TASK == 'rights_offering'

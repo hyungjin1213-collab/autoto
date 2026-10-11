@@ -8,6 +8,7 @@ GitHub Actions가 평일 아침마다 돌려서 결과 CSV를 `output/`에 커�
 | `autoto.turnover` | 회전율(거래량/상장주식수) 순위, 5·20·60일 평균, 급증배수 | `turnover/turnover_today.csv`, `turnover/turnover_history.csv` |
 | `autoto.monthly_candle` | 월봉매매법 후보 선별 + 백테스트 | `monthly_candle/candidates.csv`, `monthly_candle/backtest_*.csv` |
 | `autoto.rights_offering` | DART 유상증자 중 제3자배정 공시와 배정대상자 수집 | `rights_offering/third_party_allotments.csv`, `rights_offering/allottees.csv` |
+| `autoto.briefing` | 텔레그램 시황 브리핑 (장 전·장 마감) | `briefing/latest.txt` |
 
 CSV는 UTF-8 BOM이라 엑셀에서 바로 열립니다.
 
@@ -42,6 +43,33 @@ python -m autoto.web        # 브라우저에서 http://127.0.0.1:8000 이 열�
 
 `output/` 폴더의 CSV를 읽어서 보여주므로 GitHub Actions가 만든 결과를 `git pull` 로 받아 바로 볼 수도 있습니다.
 이 컴퓨터에서만 접속되며(127.0.0.1), 화면에 넣은 DART 인증키는 저장하지 않습니다.
+
+## 텔레그램 시황 브리핑
+
+평일 아침(장 전)과 장 마감 후(16시쯤) 텔레그램으로 요약을 보냅니다.
+
+- 코스피·코스닥 지수
+- 주도 섹터: 네이버 업종 등락률 상위 5개와 업종별 거래대금 상위 종목
+- 거래 급증: 회전율 5일 평균이 60일 평균의 3배 이상
+- 과매도 후보: 거래대금 상위 300종목 중 RSI(14) 30 이하, 20일선 이격도
+- 월봉매매 후보와 이번 달 목표가 도달 여부
+- 새 제3자배정 유상증자 공시 (아침: 전 거래일 이후, 마감: 오늘)
+
+설정 (처음 한 번):
+
+1. 텔레그램에서 **@BotFather** 에게 `/newbot` → 봇 이름 입력 → **토큰**을 받습니다.
+2. 만든 봇과 대화방을 열고 아무 메시지나 보냅니다.
+3. 브라우저에서 `https://api.telegram.org/bot<토큰>/getUpdates` 를 열어 `"chat":{"id":123456789` 의 숫자를 확인합니다.
+4. **Settings → Secrets and variables → Actions** 에 `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` 를 추가합니다.
+5. **Actions → Autoto → Run workflow** (task: `briefing`) 로 바로 받아볼 수 있습니다.
+
+```bash
+python -m autoto.briefing --dry-run             # 보내지 않고 화면에 출력
+python -m autoto.briefing --session close --max-rsi 35
+```
+
+GitHub 예약 실행은 붐비면 늦게 시작할 수 있어 아침 브리핑이 8시 넘어 올 수도 있습니다.
+장 마감 브리핑은 휴장일이면 보내지 않습니다.
 
 ## 월봉매매법
 
