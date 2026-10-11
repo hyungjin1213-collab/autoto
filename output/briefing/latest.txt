@@ -38,4 +38,6 @@
 
 📝 <b>제3자배정 유상증자</b> 새 공시 0건
 
+⚠️ 주도 섹터 불러오기 실패
+
 <a href="https://hyungjin1213-collab.github.io/autoto/">홈페이지에서 자세히 보기</a>
