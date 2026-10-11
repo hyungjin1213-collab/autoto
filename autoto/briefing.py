@@ -5,6 +5,8 @@
   - 주도 업종·테마: 네이버 증권 업종/테마 등락률 상위와 그 안의 거래대금 상위 종목
   - 회전율 급증 종목 (output/turnover/turnover_history.csv)
   - 과매도 후보: 거래대금 상위 종목 중 RSI(14) 이하 + 20일선 이격도
+  - 거래량 바닥 시가 이탈: 최근 40거래일 안에 바닥권에서 평소 8배 거래량의 꽉 찬 장대양봉(기준봉)이
+    나왔는데, 지금 주가가 그 기준봉의 시가 아래로 내려온 종목
   - 월봉매매 후보와 목표가 도달 여부 (output/monthly_candle/candidates.csv)
   - 새 제3자배정 유상증자 공시 (DART_API_KEY 가 있으면 최근 며칠만 직접 조회)
 
@@ -21,6 +23,7 @@ Usage:
 
 import argparse
 import datetime as dt
+from dataclasses import dataclass
 import html
 import os
 import re
@@ -164,11 +167,17 @@ def oversold_metrics(daily):
             "return_5d": float((c.iloc[-1] / c.iloc[-6] - 1) * 100)}
 
 
-def oversold(universe, max_rsi=30, top=10, fetch_daily=None):
+def fetch_recent(codes, days=200, fetch_daily=None):
+    """최근 일봉. 캐시를 쓰지 않아야 오늘 종가가 들어갑니다."""
+    start = pd.Timestamp.today().normalize() - pd.Timedelta(days=days)
+    return fetch_daily(list(codes), start) if fetch_daily else prices.daily_many(list(codes), start)
+
+
+def oversold(universe, max_rsi=30, top=10, fetch_daily=None, data=None):
     """universe: Code/Name/Market 열. RSI(14) <= max_rsi 를 RSI 낮은 순으로."""
-    start = pd.Timestamp.today().normalize() - pd.Timedelta(days=120)
-    data = fetch_daily(list(universe["Code"]), start) if fetch_daily else \
-        prices.daily_many(list(universe["Code"]), start)  # 캐시를 쓰지 않아야 오늘 종가가 들어갑니다
+    if data is None:
+        data = fetch_recent(universe["Code"], 120, fetch_daily)
+    data = {c: data[c] for c in universe["Code"] if c in data}
     if not data:
         raise RuntimeError("시세를 하나도 받지 못했습니다")
     names = universe.set_index("Code")
@@ -180,6 +189,67 @@ def oversold(universe, max_rsi=30, top=10, fetch_daily=None):
     rows.sort(key=lambda r: r["rsi"])
     latest = max((m["date"] for m in rows), default=None)
     return rows[:top], latest
+
+
+@dataclass
+class BottomParams:
+    lookback: int = 40        # 기준봉을 찾는 기간 (오늘 제외 최근 N거래일)
+    vol_mult: float = 8.0     # 기준봉 거래량 >= 직전 vol_avg일 평균 x vol_mult
+    vol_avg: int = 20
+    min_gain: float = 0.05    # 기준봉 종가 상승률(전일 종가 대비) 하한
+    min_fill: float = 0.5     # 종가 상승폭 / 고가 상승폭 하한 (고가 +20%, 종가 +10% = 0.5)
+    low_window: int = 60      # 바닥 판단: 기준봉 저가가 직전 low_window일 최저가의
+    near_low: float = 0.10    #   (1 + near_low) 배 이내
+
+
+def find_bottom_candle(daily, p=BottomParams()):
+    """최근 p.lookback 거래일(오늘 제외) 중 조건을 만족하는 가장 최근 기준봉의 위치(iloc). 없으면 None."""
+    o, h, l, c, v = (daily[k].to_numpy(dtype=float) for k in ("Open", "High", "Low", "Close", "Volume"))
+    n = len(c)
+    first = max(n - 1 - p.lookback, max(p.vol_avg, p.low_window, 1))
+    for i in range(n - 2, first - 1, -1):
+        prev = c[i - 1]
+        avg_vol = v[i - p.vol_avg:i].mean()
+        if not (prev > 0 and avg_vol > 0 and v[i] >= p.vol_mult * avg_vol and c[i] > o[i]):
+            continue
+        gain, high_gain = c[i] / prev - 1, h[i] / prev - 1
+        if gain < p.min_gain or high_gain <= 0 or gain / high_gain < p.min_fill:
+            continue
+        if l[i] > l[i - p.low_window:i].min() * (1 + p.near_low):
+            continue
+        return i
+    return None
+
+
+def bottom_break(daily, p=BottomParams()):
+    """기준봉이 있고 현재 종가가 그 시가 아래면 정보 dict, 아니면 None."""
+    if len(daily) < max(p.vol_avg, p.low_window) + 2:
+        return None
+    i = find_bottom_candle(daily, p)
+    if i is None:
+        return None
+    base, close = daily.iloc[i], float(daily["Close"].iloc[-1])
+    if close >= base["Open"]:
+        return None
+    prev = daily["Close"].iloc[i - 1]
+    return {"base_date": daily.index[i].date(), "days_ago": len(daily) - 1 - i,
+            "base_open": float(base["Open"]), "base_gain": float((base["Close"] / prev - 1) * 100),
+            "base_high_gain": float((base["High"] / prev - 1) * 100),
+            "vol_mult": float(base["Volume"] / daily["Volume"].iloc[i - p.vol_avg:i].mean()),
+            "close": close, "below_open": float((close / base["Open"] - 1) * 100)}
+
+
+def bottom_breaks(universe, data, p=BottomParams(), top=10):
+    """기준봉 시가를 이탈한 종목, 기준봉이 최근인 순."""
+    names = universe.set_index("Code")["Name"]
+    rows = []
+    for code in universe["Code"]:
+        if code in data:
+            m = bottom_break(data[code], p)
+            if m:
+                rows.append({"code": code, "name": names[code], **m})
+    rows.sort(key=lambda r: r["days_ago"])
+    return rows[:top]
 
 
 def liquid_universe(n=300, min_price=1000):
@@ -245,7 +315,7 @@ def group_lines(groups):
 
 
 def build_message(session, now, indices, sectors, spikes, oversold_rows, candidates, allotments, errors=(),
-                  themes=()):
+                  themes=(), bottoms=None):
     title = "🌅 장 전 브리핑" if session == "morning" else "🌆 장 마감 브리핑"
     lines = [f"<b>{title}</b>  {now:%Y-%m-%d} ({'월화수목금토일'[now.weekday()]})"]
     if indices:
@@ -265,6 +335,14 @@ def build_message(session, now, indices, sectors, spikes, oversold_rows, candida
         lines.append(f"• {esc(r['name'])} RSI {r['rsi']:.0f}, 20일선 {r['disparity']:.0f}%, 5일 {fmt_pct(r['return_5d'])}")
     if not oversold_rows:
         lines.append("해당 없음")
+
+    if bottoms is not None:
+        lines += ["", "🧲 <b>과매도 (거래량 바닥 시가 이탈)</b>", "<i>40일 내 바닥권 8배 거래량 장대양봉 → 그 시가 아래</i>"]
+        for r in bottoms:
+            lines.append(f"• {esc(r['name'])} {r['base_date']:%m/%d} 기준봉 {fmt_pct(r['base_gain'])}·거래량 "
+                         f"{r['vol_mult']:.0f}배 → 시가 대비 {fmt_pct(r['below_open'])}")
+        if not bottoms:
+            lines.append("해당 없음")
 
     hit = sum(bool(c.get("목표도달")) for c in candidates)
     lines += ["", f"🗓 <b>월봉매매 후보</b> {now.month}월 {len(candidates)}종목 · 목표가 도달 {hit}"]
@@ -314,7 +392,9 @@ def parse_args(argv=None):
     ap.add_argument("--session", choices=["auto", "morning", "close"], default="auto",
                     help="auto: 한국시간 12시 전이면 아침, 이후면 마감")
     ap.add_argument("--rights-csv", type=Path, help="제3자배정 CSV (기본: output/rights_offering)")
-    ap.add_argument("--universe", type=int, default=300, help="과매도 검사 대상: 거래대금 상위 N")
+    ap.add_argument("--universe", type=int, default=300, help="RSI 과매도 검사 대상: 거래대금 상위 N")
+    ap.add_argument("--bottom-universe", type=int, default=1000, help="거래량 바닥 검사 대상: 거래대금 상위 N")
+    ap.add_argument("--vol-mult", type=float, default=8.0, help="기준봉 거래량 배수")
     ap.add_argument("--max-rsi", type=float, default=30)
     ap.add_argument("--dry-run", action="store_true", help="텔레그램으로 보내지 않고 출력만")
     ap.add_argument("--force", action="store_true", help="휴장일에도 보내기 (수동 실행 시 자동)")
@@ -345,7 +425,12 @@ def main(argv=None):
     sectors = attempt("주도 업종", lambda: leading_groups("industry"), [])
     themes = attempt("주도 테마", lambda: leading_groups("theme"), [])
     spikes = attempt("거래 급증", turnover_spikes, [])
-    oversold_rows, _ = attempt("과매도", lambda: oversold(liquid_universe(args.universe), args.max_rsi), ([], None))
+    broad = attempt("시세", lambda: liquid_universe(max(args.universe, args.bottom_universe)), None)
+    data = attempt("시세", lambda: fetch_recent(broad["Code"]), {}) if broad is not None else {}
+    oversold_rows, _ = attempt("과매도", lambda: oversold(broad.head(args.universe), args.max_rsi, data=data),
+                               ([], None))
+    bottoms = attempt("거래량 바닥", lambda: bottom_breaks(broad.head(args.bottom_universe), data,
+                                                       BottomParams(vol_mult=args.vol_mult)), [])
     candidates = attempt("월봉 후보", monthly_candidates, [])
     since = previous_weekday(today) if session == "morning" else today
     rights_csv = args.rights_csv or RIGHTS_CSV
@@ -357,7 +442,7 @@ def main(argv=None):
         errors.append("유상증자")
 
     text = build_message(session, now, indices, sectors, spikes, oversold_rows, candidates, allotments, errors,
-                         themes)
+                         themes, bottoms)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     (OUTPUT_DIR / "latest.txt").write_text(text, encoding="utf-8")
 

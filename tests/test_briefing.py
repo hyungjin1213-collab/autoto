@@ -150,3 +150,62 @@ def test_build_message_and_split():
     assert "🎯 <b>주도 테마</b>\n1. 리비안 <b>+3.5%</b>" in text
     parts = briefing.split_message(text, limit=200)
     assert all(len(p) <= 200 for p in parts) and "\n".join(parts) == text
+
+
+def bars(n=130, base_at=None, base=None, last_close=98.0, low=100.0, vol=1000.0):
+    """평평한 일봉 (시가=종가=100, 저가 low) + 선택적 기준봉 + 마지막날 종가."""
+    idx = pd.bdate_range("2026-03-02", periods=n)
+    df = pd.DataFrame({"Open": 100.0, "High": 101.0, "Low": low, "Close": 100.0, "Volume": vol}, index=idx)
+    if base_at is not None:
+        i = n - 1 - base_at
+        for k, val in base.items():
+            df.iloc[i, df.columns.get_loc(k)] = val
+        df.iloc[i + 1:, df.columns.get_loc("Close")] = base["Close"]  # 이후 기준봉 종가 근처 유지
+        df.iloc[i + 1:, df.columns.get_loc("Open")] = base["Close"]
+    df.iloc[-1, df.columns.get_loc("Close")] = last_close
+    return df
+
+
+GOOD = {"Open": 101.0, "High": 120.0, "Low": 99.0, "Close": 110.0, "Volume": 10_000.0}  # 고가+20%, 종가+10%, 10배
+
+
+def test_bottom_break_detects_full_bodied_volume_candle_and_open_break():
+    m = briefing.bottom_break(bars(base_at=10, base=GOOD))
+    assert m["days_ago"] == 10 and m["base_open"] == 101.0
+    assert m["base_gain"] == pytest.approx(10.0) and m["base_high_gain"] == pytest.approx(20.0)
+    assert m["vol_mult"] == pytest.approx(10.0)
+    assert m["below_open"] == pytest.approx((98 / 101 - 1) * 100)
+
+
+@pytest.mark.parametrize("change, why", [
+    ({"Close": 103.0}, "고가 +20%에 종가 +3%: 봉이 차 있지 않음"),
+    ({"Volume": 5_000.0}, "거래량 5배"),
+    ({"High": 104.0, "Close": 104.0}, "종가 +4%: 장대양봉 아님"),
+])
+def test_bottom_break_rejects_weak_candles(change, why):
+    assert briefing.bottom_break(bars(base_at=10, base={**GOOD, **change})) is None, why
+
+
+def test_bottom_break_needs_open_break_lookback_and_bottom():
+    assert briefing.bottom_break(bars(base_at=10, base=GOOD, last_close=102.0)) is None  # 시가 위
+    assert briefing.bottom_break(bars(base_at=45, base=GOOD)) is None                     # 40거래일 밖
+    high_up = bars(base_at=10, base=GOOD, low=80.0)  # 직전 저가 80 -> 기준봉 저가 99는 바닥이 아님
+    assert briefing.bottom_break(high_up) is None
+    assert briefing.bottom_break(bars(base_at=10, base=GOOD), briefing.BottomParams(vol_mult=12)) is None
+
+
+def test_bottom_breaks_orders_by_recency():
+    data = {"A": bars(base_at=20, base=GOOD), "B": bars(base_at=5, base=GOOD), "C": bars()}
+    universe = pd.DataFrame({"Code": ["A", "B", "C"], "Name": ["에이", "비", "씨"], "Market": "KOSDAQ"})
+    rows = briefing.bottom_breaks(universe, data)
+    assert [r["name"] for r in rows] == ["비", "에이"]
+
+
+def test_message_shows_bottom_section():
+    now = dt.datetime(2026, 10, 12, 16, 10, tzinfo=briefing.KST)
+    rows = [{"name": "가나다", "base_date": dt.date(2026, 10, 2), "base_gain": 12.0, "vol_mult": 9.5,
+             "below_open": -3.1}]
+    text = briefing.build_message("close", now, {}, [], [], [], [], [], bottoms=rows)
+    assert "🧲 <b>과매도 (거래량 바닥 시가 이탈)</b>" in text
+    assert "• 가나다 10/02 기준봉 +12.0%·거래량 10배 → 시가 대비 -3.1%" in text
+    assert "🧲" not in briefing.build_message("close", now, {}, [], [], [], [], [])
