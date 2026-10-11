@@ -105,7 +105,8 @@ jobs:
         continue-on-error: true
         run: |
           python -m autoto.briefing --session ${{ env.TASK == 'briefing' && 'close' || 'morning' }} \
-            --rights-csv .cache/rights_recent/third_party_allotments.csv
+            --rights-csv .cache/rights_recent/third_party_allotments.csv \
+            ${{ github.event_name == 'workflow_dispatch' && '--force' || '' }}
 
       - name: Rights offering (DART)
         if: env.TASK == 'daily' || env.TASK == 'rights_offering'

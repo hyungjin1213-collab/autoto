@@ -320,7 +320,7 @@ def parse_args(argv=None):
     ap.add_argument("--universe", type=int, default=300, help="과매도 검사 대상: 거래대금 상위 N")
     ap.add_argument("--max-rsi", type=float, default=30)
     ap.add_argument("--dry-run", action="store_true", help="텔레그램으로 보내지 않고 출력만")
-    ap.add_argument("--force", action="store_true", help="휴장일에도 보내기")
+    ap.add_argument("--force", action="store_true", help="휴장일에도 보내기 (수동 실행 시 자동)")
     return ap.parse_args(argv)
 
 
