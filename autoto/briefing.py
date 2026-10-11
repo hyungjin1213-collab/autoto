@@ -2,7 +2,7 @@
 
 내용
   - 코스피·코스닥 지수
-  - 주도 섹터: 네이버 업종 등락률 상위와 업종별 거래대금 상위 종목
+  - 주도 업종·테마: 네이버 증권 업종/테마 등락률 상위와 그 안의 거래대금 상위 종목
   - 회전율 급증 종목 (output/turnover/turnover_history.csv)
   - 과매도 후보: 거래대금 상위 종목 중 RSI(14) 이하 + 20일선 이격도
   - 월봉매매 후보와 목표가 도달 여부 (output/monthly_candle/candidates.csv)
@@ -42,10 +42,9 @@ HOMEPAGE = "https://hyungjin1213-collab.github.io/autoto/"
 
 KST = dt.timezone(dt.timedelta(hours=9))
 FCHART = "https://fchart.stock.naver.com/sise.nhn?timeframe=day&count={count}&requestType=0&symbol={symbol}"
-SECTORS_URL = "https://finance.naver.com/sise/sise_group.naver?type=upjong"
-SECTOR_DETAIL_URL = "https://finance.naver.com/sise/sise_group_detail.naver?type=upjong&no={no}"
-SECTOR_RE = re.compile(r"sise_group_detail\.naver\?type=upjong&(?:amp;)?no=(\d+)[^>]*>(.*?)</a>", re.S)
-PCT_RE = re.compile(r"^[+-]?\d+(?:\.\d+)?%$")
+# 네이버 증권(새 사이트)이 쓰는 JSON. kind = industry(업종) / theme(테마)
+GROUPS_URL = "https://m.stock.naver.com/api/stocks/{kind}?page=1&pageSize=300"
+GROUP_STOCKS_URL = "https://m.stock.naver.com/api/stocks/{kind}/{no}?page=1&pageSize=100"
 TELEGRAM_LIMIT = 4000  # 텔레그램 한 메시지 최대 4096자
 
 
@@ -104,64 +103,39 @@ def index_summary(fetch=http_get):
     return out
 
 
-# ---------------------------------------------------------------- 주도 섹터
-def parse_sectors(page_html):
-    """업종 목록 -> [{no, name, change, count}]. count = 업종 종목 수."""
-    sectors = []
-    for tr in prices.ROW_RE.findall(page_html):
-        m = SECTOR_RE.search(tr)
-        if not m:
-            continue
-        cells = [prices._text(c) for _, c in prices.CELL_RE.findall(tr)]
-        change = next((pct(c) for c in cells if PCT_RE.match(c.replace(" ", ""))), None)
-        counts = [int(c) for c in cells if c.isdigit()]
-        sectors.append({"no": m.group(1), "name": prices._text(m.group(2)), "change": change,
-                        "count": counts[0] if counts else 0})
-    return sectors
+# ---------------------------------------------------------------- 주도 업종·테마
+def parse_groups(data):
+    """업종/테마 목록 JSON -> [{no, name, change, count}]."""
+    return [{"no": g["no"], "name": g["name"], "change": pct(g.get("changeRate")),
+             "count": int(g.get("totalCount") or 0)} for g in data.get("groups", [])]
 
 
-def parse_sector_stocks(page_html):
-    """업종 상세 -> [{code, name, change, amount}] (헤더 이름으로 열을 찾습니다)."""
-    header, rows = None, []
-    for tr in prices.ROW_RE.findall(page_html):
-        cells = prices.CELL_RE.findall(tr)
-        if cells and all(kind.lower() == "h" for kind, _ in cells):
-            header = [prices._text(c).replace(" ", "") for _, c in cells]
-            continue
-        code = prices.CODE_RE.search(tr)
-        if not code or not header:
-            continue
-        texts = [prices._text(c) for _, c in cells]
-        values = dict(zip(header, texts))
-        change = pct(values.get("등락률")) if "등락률" in values else next(
-            (pct(t) for t in texts if PCT_RE.match(t.replace(" ", ""))), None)
-        rows.append({"code": code.group(1), "name": values.get("종목명", texts[0]).rstrip(" *"),
-                     "change": change, "amount": prices._num(values.get("거래대금", "")) or 0})
-    return rows
+def parse_group_stocks(data):
+    """업종/테마 종목 JSON -> [{code, name, change, amount}]. amount = 거래대금(백만원)."""
+    return [{"code": x.get("itemCode"), "name": x.get("stockName", ""), "change": pct(x.get("fluctuationsRatio")),
+             "amount": prices._num(str(x.get("accumulatedTradingValue", ""))) or 0} for x in data.get("stocks", [])]
 
 
-def leading_sectors(fetch=http_get, top=5, stocks_per_sector=3, min_count=5):
-    page = fetch(SECTORS_URL)
-    parsed = parse_sectors(page)
-    if not parsed:  # 네이버가 페이지 구조를 바꾸면 여기서 알 수 있게 단서를 남깁니다
-        title = re.search(r"<title>(.*?)</title>", page, re.S | re.I)
-        links = re.findall(r'href="([^"]*(?:upjong|group)[^"]*)"', page)[:3]
-        apis = sorted(set(re.findall(r"[\w./:-]*api[\w./?=&{}:-]{0,80}", page)))[:25]
-        at = page.find("반도체")
-        raise RuntimeError(f"업종 목록을 읽지 못했습니다 (길이 {len(page)}, 제목 {title and title.group(1).strip()!r}, "
-                           f"링크 {links}, 표 {re.findall(r'<table[^>]*>', page)[:3]}, "
-                           f"NEXT_DATA {'__NEXT_DATA__' in page}, api {apis}, "
-                           f"반도체 주변 {page[max(at - 300, 0):at + 300] if at >= 0 else None!r})")
-    sectors = [s for s in parsed if s["change"] is not None and s["count"] >= min_count]
-    sectors.sort(key=lambda s: s["change"], reverse=True)
-    for s in sectors[:top]:
+def fetch_json(url):
+    import json
+    return json.loads(http_get(url, encoding="utf-8"))
+
+
+def leading_groups(kind="industry", fetch=fetch_json, top=5, stocks_per_group=3, min_count=5):
+    """등락률 상위 업종(또는 테마)과 각 그룹의 거래대금 상위 종목."""
+    groups = [g for g in parse_groups(fetch(GROUPS_URL.format(kind=kind)))
+              if g["change"] is not None and g["count"] >= min_count]
+    if not groups:
+        raise RuntimeError(f"네이버 {kind} 목록이 비어 있습니다")
+    groups.sort(key=lambda g: g["change"], reverse=True)
+    for g in groups[:top]:
         try:
-            stocks = parse_sector_stocks(fetch(SECTOR_DETAIL_URL.format(no=s["no"])))
+            stocks = parse_group_stocks(fetch(GROUP_STOCKS_URL.format(kind=kind, no=g["no"])))
         except Exception as e:
-            print(f"  업종 상세 실패 {s['name']}: {e}", file=sys.stderr)
+            print(f"  {g['name']} 종목 실패: {e}", file=sys.stderr)
             stocks = []
-        s["leaders"] = sorted(stocks, key=lambda x: x["amount"], reverse=True)[:stocks_per_sector]
-    return sectors[:top]
+        g["leaders"] = sorted(stocks, key=lambda x: x["amount"], reverse=True)[:stocks_per_group]
+    return groups[:top]
 
 
 # ---------------------------------------------------------------- 과매도
@@ -255,18 +229,23 @@ def previous_weekday(day):
 
 
 # ---------------------------------------------------------------- 메시지
-def build_message(session, now, indices, sectors, spikes, oversold_rows, candidates, allotments, errors=()):
+def group_lines(groups):
+    lines = []
+    for i, g in enumerate(groups, 1):
+        leaders = ", ".join(f"{esc(x['name'])} {fmt_pct(x['change'])}" for x in g.get("leaders", []))
+        lines.append(f"{i}. {esc(g['name'])} <b>{fmt_pct(g['change'])}</b>" + (f"\n    {leaders}" if leaders else ""))
+    return lines or ["데이터 없음"]
+
+
+def build_message(session, now, indices, sectors, spikes, oversold_rows, candidates, allotments, errors=(),
+                  themes=()):
     title = "🌅 장 전 브리핑" if session == "morning" else "🌆 장 마감 브리핑"
     lines = [f"<b>{title}</b>  {now:%Y-%m-%d} ({'월화수목금토일'[now.weekday()]})"]
     if indices:
         lines.append(" · ".join(f"{k} {v['close']:,.2f} ({fmt_pct(v['change'], 2)})" for k, v in indices.items()))
 
-    lines += ["", "🔥 <b>주도 섹터</b>"]
-    for i, s in enumerate(sectors, 1):
-        leaders = ", ".join(f"{esc(x['name'])} {fmt_pct(x['change'])}" for x in s.get("leaders", []))
-        lines.append(f"{i}. {esc(s['name'])} <b>{fmt_pct(s['change'])}</b>" + (f"\n    {leaders}" if leaders else ""))
-    if not sectors:
-        lines.append("데이터 없음")
+    lines += ["", "🔥 <b>주도 업종</b>"] + group_lines(sectors)
+    lines += ["", "🎯 <b>주도 테마</b>"] + group_lines(themes)
 
     lines += ["", "📈 <b>거래 급증</b> (회전율 5일/60일 평균)"]
     for r in spikes:
@@ -356,7 +335,8 @@ def main(argv=None):
         print(f"오늘({today})은 휴장일로 보입니다 (마지막 거래일 {last_day}). 보내지 않습니다.", file=sys.stderr)
         return
 
-    sectors = attempt("주도 섹터", leading_sectors, [])
+    sectors = attempt("주도 업종", lambda: leading_groups("industry"), [])
+    themes = attempt("주도 테마", lambda: leading_groups("theme"), [])
     spikes = attempt("거래 급증", turnover_spikes, [])
     oversold_rows, _ = attempt("과매도", lambda: oversold(liquid_universe(args.universe), args.max_rsi), ([], None))
     candidates = attempt("월봉 후보", monthly_candidates, [])
@@ -369,7 +349,8 @@ def main(argv=None):
         allotments = []
         errors.append("유상증자")
 
-    text = build_message(session, now, indices, sectors, spikes, oversold_rows, candidates, allotments, errors)
+    text = build_message(session, now, indices, sectors, spikes, oversold_rows, candidates, allotments, errors,
+                         themes)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     (OUTPUT_DIR / "latest.txt").write_text(text, encoding="utf-8")
 

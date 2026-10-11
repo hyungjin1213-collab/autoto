@@ -12,52 +12,26 @@ FCHART = """<?xml version="1.0" encoding="EUC-KR" ?>
 <item data="20261008|2610|2650|2600|2636.35|450000" />
 </chartdata></protocol>"""
 
-SECTORS = """<table class="type_1" summary="업종별 시세 리스트">
-<tr><th>업종명</th><th>전일대비</th><th colspan="4">전일대비 등락현황</th><th>등락그래프</th></tr>
-<tr><th>전체</th><th>상승</th><th>보합</th><th>하락</th></tr>
-<tr>
-<td style="padding-left:10px;"><a href="/sise/sise_group_detail.naver?type=upjong&no=278">반도체와반도체장비</a></td>
-<td class="number"><span class="tah p11 red01">+3.25%</span></td>
-<td class="number">135</td><td class="number">99</td><td class="number">10</td><td class="number">26</td>
-<td><div class="graph_bar"></div></td></tr>
-<tr>
-<td style="padding-left:10px;"><a href="/sise/sise_group_detail.naver?type=upjong&amp;no=999">우주항공</a></td>
-<td class="number"><span class="tah p11 red01">+9.10%</span></td>
-<td class="number">3</td><td class="number">3</td><td class="number">0</td><td class="number">0</td>
-<td></td></tr>
-<tr>
-<td style="padding-left:10px;"><a href="/sise/sise_group_detail.naver?type=upjong&no=261">제약</a></td>
-<td class="number"><span class="tah p11 nv01">-1.02%</span></td>
-<td class="number">140</td><td class="number">30</td><td class="number">5</td><td class="number">105</td>
-<td></td></tr>
-<tr>
-<td style="padding-left:10px;"><a href="/sise/sise_group_detail.naver?type=upjong&no=300">은행</a></td>
-<td class="number"><span class="tah p11 red01">+1.50%</span></td>
-<td class="number">10</td><td class="number">8</td><td class="number">0</td><td class="number">2</td>
-<td></td></tr>
-</table>"""
+# m.stock.naver.com/api/stocks/industry 응답 형태 (2026-10 확인)
+GROUPS = {"stockListSortType": "INDUSTRY", "groups": [
+    {"no": 332, "name": "문구류", "totalCount": 1, "changeRate": "5.03", "riseCount": 1, "fallCount": 0, "steadyCount": 0},
+    {"no": 278, "name": "반도체와반도체장비", "totalCount": 135, "changeRate": "3.25", "riseCount": 99, "fallCount": 26,
+     "steadyCount": 10},
+    {"no": 261, "name": "제약", "totalCount": 140, "changeRate": "-1.02", "riseCount": 30, "fallCount": 105,
+     "steadyCount": 5},
+    {"no": 300, "name": "은행", "totalCount": 10, "changeRate": "1.50", "riseCount": 8, "fallCount": 2, "steadyCount": 0},
+], "totalCount": 79, "page": 1, "pageSize": 300, "marketStatus": "CLOSE"}
 
-DETAIL = """<table class="type_5" summary="업종별 시세 리스트">
-<thead><tr><th>종목명</th><th>현재가</th><th>전일비</th><th>등락률</th><th>매수호가</th><th>매도호가</th>
-<th>거래량</th><th>거래대금</th><th>전일거래량</th><th>토론실</th></tr></thead>
-<tbody>
-<tr><td class="name"><div class="name_area"><a href="/item/main.naver?code=000660">SK하이닉스</a></div></td>
-<td class="number">200,000</td><td class="number"><span>상승 10,000</span></td>
-<td class="number"><span class="tah p11 red01">+5.26%</span></td><td class="number">199,900</td><td class="number">200,000</td>
-<td class="number">5,000,000</td><td class="number">1,000,000</td><td class="number">4,000,000</td><td></td></tr>
-<tr><td class="name"><div class="name_area"><a href="/item/main.naver?code=042700">한미반도체 *</a></div></td>
-<td class="number">100,000</td><td class="number">0</td>
-<td class="number"><span class="tah p11 red01">+7.30%</span></td><td class="number">1</td><td class="number">1</td>
-<td class="number">1,000,000</td><td class="number">100,000</td><td class="number">1</td><td></td></tr>
-<tr><td class="name"><div class="name_area"><a href="/item/main.naver?code=005930">삼성전자</a></div></td>
-<td class="number">70,000</td><td class="number">0</td>
-<td class="number"><span class="tah p11 red01">+2.00%</span></td><td class="number">1</td><td class="number">1</td>
-<td class="number">20,000,000</td><td class="number">1,400,000</td><td class="number">1</td><td></td></tr>
-<tr><td class="name"><div class="name_area"><a href="/item/main.naver?code=000990">DB하이텍</a></div></td>
-<td class="number">50,000</td><td class="number">0</td>
-<td class="number"><span class="tah p11 nv01">-1.00%</span></td><td class="number">1</td><td class="number">1</td>
-<td class="number">10,000</td><td class="number">500</td><td class="number">1</td><td></td></tr>
-</tbody></table>"""
+
+def stock(code, name, ratio, value):
+    return {"stockType": "domestic", "itemCode": code, "stockName": name, "closePrice": "11,290",
+            "fluctuationsRatio": ratio, "accumulatedTradingVolume": "387,121", "accumulatedTradingValue": value,
+            "marketValue": "904"}
+
+
+GROUP_STOCKS = {"stockListSortType": "INDUSTRY", "stocks": [
+    stock("000660", "SK하이닉스", "5.26", "1,000,000"), stock("042700", "한미반도체", "7.30", "100,000"),
+    stock("005930", "삼성전자", "2.00", "1,400,000"), stock("000990", "DB하이텍", "-1.00", "500")]}
 
 
 def test_parse_fchart():
@@ -72,28 +46,29 @@ def test_index_summary_change():
     assert got["코스피"]["change"] == pytest.approx((2636.35 / 2610.25 - 1) * 100)
 
 
-def test_parse_sectors():
-    s = briefing.parse_sectors(SECTORS)
-    assert [x["name"] for x in s] == ["반도체와반도체장비", "우주항공", "제약", "은행"]
-    assert s[0] == {"no": "278", "name": "반도체와반도체장비", "change": 3.25, "count": 135}
-    assert s[1]["no"] == "999" and s[2]["change"] == -1.02
+def test_parse_groups_and_stocks():
+    g = briefing.parse_groups(GROUPS)
+    assert g[1] == {"no": 278, "name": "반도체와반도체장비", "change": 3.25, "count": 135}
+    st = briefing.parse_group_stocks(GROUP_STOCKS)
+    assert st[0] == {"code": "000660", "name": "SK하이닉스", "change": 5.26, "amount": 1_000_000}
 
 
-def test_parse_sector_stocks():
-    rows = briefing.parse_sector_stocks(DETAIL)
-    assert [r["name"] for r in rows] == ["SK하이닉스", "한미반도체", "삼성전자", "DB하이텍"]  # 코스닥 * 제거
-    assert rows[0]["change"] == 5.26 and rows[0]["amount"] == 1_000_000
-
-
-def test_leading_sectors_skips_tiny_sectors_and_orders_leaders_by_amount():
-    pages = {briefing.SECTORS_URL: SECTORS}
+def test_leading_groups_skips_tiny_groups_and_orders_leaders_by_amount():
+    urls = []
 
     def fetch(url):
-        return pages.get(url, DETAIL)
+        urls.append(url)
+        return GROUPS if url == briefing.GROUPS_URL.format(kind="theme") else GROUP_STOCKS
 
-    got = briefing.leading_sectors(fetch=fetch, top=2)
-    assert [s["name"] for s in got] == ["반도체와반도체장비", "은행"]  # 우주항공(3종목) 제외
+    got = briefing.leading_groups("theme", fetch=fetch, top=2)
+    assert [g["name"] for g in got] == ["반도체와반도체장비", "은행"]  # 1종목짜리 문구류 제외
     assert [x["name"] for x in got[0]["leaders"]] == ["삼성전자", "SK하이닉스", "한미반도체"]
+    assert urls[1] == "https://m.stock.naver.com/api/stocks/theme/278?page=1&pageSize=100"
+
+
+def test_leading_groups_fails_on_empty_list():
+    with pytest.raises(RuntimeError):
+        briefing.leading_groups(fetch=lambda url: {"groups": []})
 
 
 def test_rsi_extremes():
@@ -156,11 +131,12 @@ def test_build_message_and_split():
         [{"name": "급락", "rsi": 18.2, "disparity": 85.0, "return_5d": -9.0}],
         [{"종목명": "이수화학", "이번달시가": 11220, "매도목표가": 11790, "목표도달": True}],
         [{"회사명": "엑스플러스", "조달금액_합계": 3e9, "배정대상자": "홍길동; (주)회사", "공시링크": "https://dart"}],
-        errors=["주도 섹터"])
+        errors=["주도 업종"], themes=[{"name": "리비안", "change": 3.51}])
     assert "장 마감 브리핑" in text and "2026-10-12 (월)" in text
     assert "반도체&lt;장비&gt; <b>+3.2%</b>" in text  # HTML 이스케이프
     assert "✅ 이수화학" in text and "목표가 도달 1" in text
     assert '<a href="https://dart">엑스플러스</a> 30억' in text
-    assert "주도 섹터 불러오기 실패" in text
+    assert "주도 업종 불러오기 실패" in text
+    assert "🎯 <b>주도 테마</b>\n1. 리비안 <b>+3.5%</b>" in text
     parts = briefing.split_message(text, limit=200)
     assert all(len(p) <= 200 for p in parts) and "\n".join(parts) == text
