@@ -140,8 +140,14 @@ def parse_sector_stocks(page_html):
 
 
 def leading_sectors(fetch=http_get, top=5, stocks_per_sector=3, min_count=5):
-    sectors = [s for s in parse_sectors(fetch(SECTORS_URL))
-               if s["change"] is not None and s["count"] >= min_count]
+    page = fetch(SECTORS_URL)
+    parsed = parse_sectors(page)
+    if not parsed:  # 네이버가 페이지 구조를 바꾸면 여기서 알 수 있게 단서를 남깁니다
+        title = re.search(r"<title>(.*?)</title>", page, re.S | re.I)
+        links = re.findall(r'href="([^"]*(?:upjong|group)[^"]*)"', page)[:3]
+        raise RuntimeError(f"업종 목록을 읽지 못했습니다 (길이 {len(page)}, 제목 {title and title.group(1).strip()!r}, "
+                           f"링크 {links}, 표 {re.findall(r'<table[^>]*>', page)[:3]})")
+    sectors = [s for s in parsed if s["change"] is not None and s["count"] >= min_count]
     sectors.sort(key=lambda s: s["change"], reverse=True)
     for s in sectors[:top]:
         try:
