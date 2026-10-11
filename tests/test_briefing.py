@@ -209,3 +209,48 @@ def test_message_shows_bottom_section():
     assert "🧲 <b>과매도 (거래량 바닥 시가 이탈)</b>" in text
     assert "• 가나다 10/02 기준봉 +12.0%·거래량 10배 → 시가 대비 -3.1%" in text
     assert "🧲" not in briefing.build_message("close", now, {}, [], [], [], [], [])
+
+
+def vol_series(vols, closes=None):
+    idx = pd.bdate_range("2025-01-02", periods=len(vols))
+    c = pd.Series(closes if closes is not None else [100.0] * len(vols), index=idx, dtype=float)
+    return pd.DataFrame({"Open": c, "High": c, "Low": c, "Close": c, "Volume": vols}, index=idx, dtype=float)
+
+
+def test_volume_record_only_when_last_day_beats_all_history():
+    vols = [1000.0] * 150 + [5000.0] + [1000.0] * 20 + [6000.0]
+    closes = [100.0] * 171 + [110.0]
+    r = briefing.volume_record(vol_series(vols, closes))
+    assert r["vs_prev_record"] == pytest.approx(1.2) and r["change"] == pytest.approx(10.0)
+    assert r["prev_record_date"] == vol_series(vols).index[150].date()
+    assert r["amount"] == 6000 * 110
+    assert briefing.volume_record(vol_series(vols[:-1] + [5000.0])) is None   # 기록 타이는 제외
+    assert briefing.volume_record(vol_series([1000.0] * 50 + [9000.0])) is None  # 상장 120거래일 미만
+
+
+def test_fetch_full_trims_history_and_collects_records():
+    full = {"A": vol_series([1000.0] * 300 + [9000.0]), "B": vol_series([1000.0] * 300)}
+
+    def daily(code):
+        if code == "X":
+            raise ValueError("boom")
+        return full[code]
+
+    recent, records = briefing.fetch_full(["A", "B", "X"], keep=200, daily=daily)
+    assert set(recent) == {"A", "B"} and len(recent["A"]) == 200
+    assert set(records) == {"A"}
+
+
+def test_record_volume_rows_keeps_latest_day_sorted_by_amount():
+    d1, d0 = dt.date(2026, 10, 8), dt.date(2026, 10, 7)
+    recs = {"A": {"date": d1, "amount": 1e9}, "B": {"date": d1, "amount": 5e9}, "C": {"date": d0, "amount": 9e9}}
+    universe = pd.DataFrame({"Code": ["A", "B", "C"], "Name": ["에이", "비", "씨"], "Market": "KOSPI"})
+    assert [r["name"] for r in briefing.record_volume_rows(universe, recs)] == ["비", "에이"]
+
+
+def test_message_shows_record_section():
+    now = dt.datetime(2026, 10, 12, 16, 10, tzinfo=briefing.KST)
+    rows = [{"name": "가나다", "change": 15.0, "amount": 123e8, "prev_record_date": dt.date(2021, 3, 4),
+             "vs_prev_record": 1.8}]
+    text = briefing.build_message("close", now, {}, [], [], [], [], [], records=rows)
+    assert "🚀 <b>상장 이래 최대 거래량</b>\n• 가나다 +15.0%, 거래대금 123억 (종전 최대 21.03.04의 1.8배)" in text

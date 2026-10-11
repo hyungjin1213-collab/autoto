@@ -5,8 +5,9 @@
   - 주도 업종·테마: 네이버 증권 업종/테마 등락률 상위와 그 안의 거래대금 상위 종목
   - 회전율 급증 종목 (output/turnover/turnover_history.csv)
   - 과매도 후보: 거래대금 상위 종목 중 RSI(14) 이하 + 20일선 이격도
-  - 거래량 바닥 시가 이탈: 최근 40거래일 안에 바닥권에서 평소 8배 거래량의 꽉 찬 장대양봉(기준봉)이
-    나왔는데, 지금 주가가 그 기준봉의 시가 아래로 내려온 종목
+  - 거래량 바닥 시가 이탈 (전 종목): 최근 40거래일 안에 바닥권에서 평소 8배 거래량의 꽉 찬
+    장대양봉(기준봉)이 나왔는데, 지금 주가가 그 기준봉의 시가 아래로 내려온 종목
+  - 상장 이래 최대 거래량 (전 종목): 마지막 거래일 거래량이 그 종목 역사상 최대
   - 월봉매매 후보와 목표가 도달 여부 (output/monthly_candle/candidates.csv)
   - 새 제3자배정 유상증자 공시 (DART_API_KEY 가 있으면 최근 며칠만 직접 조회)
 
@@ -173,6 +174,61 @@ def fetch_recent(codes, days=200, fetch_daily=None):
     return fetch_daily(list(codes), start) if fetch_daily else prices.daily_many(list(codes), start)
 
 
+def volume_record(daily, min_history=120):
+    """마지막 거래일 거래량이 상장(데이터 시작) 이래 최대면 정보 dict.
+
+    상장한 지 얼마 안 된 종목은 첫날들이 당연히 기록이라 min_history 거래일 미만이면 제외합니다.
+    """
+    vol = daily["Volume"]
+    if len(vol) < min_history:
+        return None
+    last, prev_max = float(vol.iloc[-1]), float(vol.iloc[:-1].max())
+    if last <= prev_max:
+        return None
+    c = daily["Close"]
+    return {"date": daily.index[-1].date(), "volume": last, "vs_prev_record": last / prev_max,
+            "prev_record_date": vol.iloc[:-1].idxmax().date(), "since": daily.index[0].date(),
+            "change": float((c.iloc[-1] / c.iloc[-2] - 1) * 100), "amount": last * float(c.iloc[-1])}
+
+
+def fetch_full(codes, keep=200, workers=8, daily=None):
+    """종목별 상장 이래 일봉을 받아 (최근 keep 거래일 일봉 dict, 거래량 기록 dict) 로 줄여서 반환.
+
+    네이버는 기간과 관계없이 전체 기록을 한 번에 주므로 전체를 받아도 다운로드 양은 같습니다.
+    메모리를 아끼려고 종목마다 받자마자 필요한 부분만 남깁니다.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    get = daily or (lambda code: prices.daily(code, "1980-01-01"))
+    recent, records = {}, {}
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {pool.submit(get, code): code for code in codes}
+        for i, future in enumerate(as_completed(futures), 1):
+            code = futures[future]
+            try:
+                df = future.result()
+            except Exception as e:
+                print(f"  {code} 시세 실패: {e}", file=sys.stderr)
+                continue
+            if df is None or df.empty:
+                continue
+            recent[code] = df.tail(keep)
+            rec = volume_record(df)
+            if rec:
+                records[code] = rec
+            if i % 500 == 0:
+                print(f"  시세 {i}/{len(codes)}", file=sys.stderr)
+    return recent, records
+
+
+def record_volume_rows(universe, records, top=10):
+    names = universe.set_index("Code")["Name"]
+    rows = [{"code": c, "name": names[c], **r} for c, r in records.items() if c in names.index]
+    rows.sort(key=lambda r: r["amount"], reverse=True)
+    latest = max((r["date"] for r in rows), default=None)
+    return [r for r in rows if r["date"] == latest][:top]
+
+
 def oversold(universe, max_rsi=30, top=10, fetch_daily=None, data=None):
     """universe: Code/Name/Market 열. RSI(14) <= max_rsi 를 RSI 낮은 순으로."""
     if data is None:
@@ -252,7 +308,7 @@ def bottom_breaks(universe, data, p=BottomParams(), top=10):
     return rows[:top]
 
 
-def liquid_universe(n=300, min_price=1000):
+def liquid_universe(n=300, min_price=1000):  # n=None 이면 전 종목
     """거래대금 상위 n 종목. 오늘 아침 회전율 결과가 있으면 그 목록을 씁니다."""
     if LISTING_CSV.exists():
         df = pd.read_csv(LISTING_CSV, dtype={"종목코드": str}).rename(columns={
@@ -260,7 +316,8 @@ def liquid_universe(n=300, min_price=1000):
     else:
         df = prices.listing()
     df = df[df["Close"] >= min_price]
-    return df.sort_values("Amount", ascending=False).head(n)[["Code", "Name", "Market"]]
+    df = df.sort_values("Amount", ascending=False)
+    return (df if n is None else df.head(n))[["Code", "Name", "Market"]]
 
 
 # ---------------------------------------------------------------- 월봉 후보 / 회전율 / 유상증자
@@ -315,7 +372,7 @@ def group_lines(groups):
 
 
 def build_message(session, now, indices, sectors, spikes, oversold_rows, candidates, allotments, errors=(),
-                  themes=(), bottoms=None):
+                  themes=(), bottoms=None, records=None):
     title = "🌅 장 전 브리핑" if session == "morning" else "🌆 장 마감 브리핑"
     lines = [f"<b>{title}</b>  {now:%Y-%m-%d} ({'월화수목금토일'[now.weekday()]})"]
     if indices:
@@ -336,8 +393,16 @@ def build_message(session, now, indices, sectors, spikes, oversold_rows, candida
     if not oversold_rows:
         lines.append("해당 없음")
 
+    if records is not None:
+        lines += ["", "🚀 <b>상장 이래 최대 거래량</b>"]
+        for r in records:
+            lines.append(f"• {esc(r['name'])} {fmt_pct(r['change'])}, 거래대금 {r['amount'] / 1e8:,.0f}억 "
+                         f"(종전 최대 {r['prev_record_date']:%y.%m.%d}의 {r['vs_prev_record']:.1f}배)")
+        if not records:
+            lines.append("해당 없음")
+
     if bottoms is not None:
-        lines += ["", "🧲 <b>과매도 (거래량 바닥 시가 이탈)</b>", "<i>40일 내 바닥권 8배 거래량 장대양봉 → 그 시가 아래</i>"]
+        lines += ["", "🧲 <b>과매도 (거래량 바닥 시가 이탈)</b>", "<i>전 종목 · 40일 내 바닥권 8배 거래량 장대양봉 → 그 시가 아래</i>"]
         for r in bottoms:
             lines.append(f"• {esc(r['name'])} {r['base_date']:%m/%d} 기준봉 {fmt_pct(r['base_gain'])}·거래량 "
                          f"{r['vol_mult']:.0f}배 → 시가 대비 {fmt_pct(r['below_open'])}")
@@ -393,7 +458,6 @@ def parse_args(argv=None):
                     help="auto: 한국시간 12시 전이면 아침, 이후면 마감")
     ap.add_argument("--rights-csv", type=Path, help="제3자배정 CSV (기본: output/rights_offering)")
     ap.add_argument("--universe", type=int, default=300, help="RSI 과매도 검사 대상: 거래대금 상위 N")
-    ap.add_argument("--bottom-universe", type=int, default=1000, help="거래량 바닥 검사 대상: 거래대금 상위 N")
     ap.add_argument("--vol-mult", type=float, default=8.0, help="기준봉 거래량 배수")
     ap.add_argument("--max-rsi", type=float, default=30)
     ap.add_argument("--dry-run", action="store_true", help="텔레그램으로 보내지 않고 출력만")
@@ -425,12 +489,13 @@ def main(argv=None):
     sectors = attempt("주도 업종", lambda: leading_groups("industry"), [])
     themes = attempt("주도 테마", lambda: leading_groups("theme"), [])
     spikes = attempt("거래 급증", turnover_spikes, [])
-    broad = attempt("시세", lambda: liquid_universe(max(args.universe, args.bottom_universe)), None)
-    data = attempt("시세", lambda: fetch_recent(broad["Code"]), {}) if broad is not None else {}
-    oversold_rows, _ = attempt("과매도", lambda: oversold(broad.head(args.universe), args.max_rsi, data=data),
-                               ([], None))
-    bottoms = attempt("거래량 바닥", lambda: bottom_breaks(broad.head(args.bottom_universe), data,
-                                                       BottomParams(vol_mult=args.vol_mult)), [])
+    everyone = attempt("종목 목록", lambda: liquid_universe(None, min_price=0), None)  # 거래대금 순 전 종목
+    data, recs = attempt("시세", lambda: fetch_full(everyone["Code"]), ({}, {})) if everyone is not None else ({}, {})
+    rsi_universe = everyone[everyone["Code"].isin(liquid_universe(args.universe)["Code"])] \
+        if everyone is not None else None
+    oversold_rows, _ = attempt("과매도", lambda: oversold(rsi_universe, args.max_rsi, data=data), ([], None))
+    bottoms = attempt("거래량 바닥", lambda: bottom_breaks(everyone, data, BottomParams(vol_mult=args.vol_mult)), [])
+    records = attempt("최대 거래량", lambda: record_volume_rows(everyone, recs), [])
     candidates = attempt("월봉 후보", monthly_candidates, [])
     since = previous_weekday(today) if session == "morning" else today
     rights_csv = args.rights_csv or RIGHTS_CSV
@@ -442,7 +507,7 @@ def main(argv=None):
         errors.append("유상증자")
 
     text = build_message(session, now, indices, sectors, spikes, oversold_rows, candidates, allotments, errors,
-                         themes, bottoms)
+                         themes, bottoms, records)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     (OUTPUT_DIR / "latest.txt").write_text(text, encoding="utf-8")
 
