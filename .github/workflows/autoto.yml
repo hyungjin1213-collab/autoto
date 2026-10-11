@@ -100,15 +100,6 @@ jobs:
         continue-on-error: true
         run: python -m autoto.rights_offering --days 4 --out .cache/rights_recent
 
-      - name: Check Telegram settings
-        if: ${{ !cancelled() && (env.TASK == 'daily' || env.TASK == 'briefing') && (env.TELEGRAM_BOT_TOKEN == '' || env.TELEGRAM_CHAT_ID == '') }}
-        env:
-          SECRETS_JSON: ${{ toJSON(secrets) }}
-        run: |
-          # 값은 출력하지 않고, 등록된 시크릿 이름만 보여줍니다.
-          names=$(python -c "import json, os; print(', '.join(sorted(json.loads(os.environ['SECRETS_JSON']))))")
-          echo "::warning::TELEGRAM_BOT_TOKEN 또는 TELEGRAM_CHAT_ID 가 비어 있습니다. 등록된 시크릿 이름: ${names}"
-
       - name: Telegram briefing
         if: ${{ !cancelled() && (env.TASK == 'daily' || env.TASK == 'briefing') }}
         continue-on-error: true
