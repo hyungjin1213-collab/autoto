@@ -254,3 +254,18 @@ def test_message_shows_record_section():
              "vs_prev_record": 1.8}]
     text = briefing.build_message("close", now, {}, [], [], [], [], [], records=rows)
     assert "🚀 <b>상장 이래 최대 거래량</b>\n• 가나다 +15.0%, 거래대금 123억 (종전 최대 21.03.04의 1.8배)" in text
+
+
+def test_bottom_breaks_counts_market_days_and_skips_halted_stocks():
+    live = bars(base_at=10, base=GOOD)
+    # 기준봉 뒤 50거래일 동안 정지됐던 종목: 자기 봉으로는 10개 전이지만 시장 기준으로는 60거래일 전
+    halted_window = bars(base_at=10, base=GOOD)
+    halted_window = pd.concat([halted_window.iloc[:-10], halted_window.iloc[-10:].set_axis(
+        live.index[-10:] + pd.offsets.BDay(50))])
+    calendar_filler = bars(n=180)  # 시장 달력을 만들어 주는 정상 종목
+    calendar_filler.index = live.index[:1].union(pd.bdate_range(live.index[0], periods=180))[:180]
+    stale = bars(base_at=10, base=GOOD).iloc[:-5]  # 마지막 5거래일 거래 없음 (정지 중)
+    data = {"A": halted_window, "B": stale, "C": calendar_filler, "D": live.set_axis(
+        live.index + pd.offsets.BDay(50))}
+    universe = pd.DataFrame({"Code": list("ABCD"), "Name": ["정지후", "정지중", "평범", "정상"], "Market": "KOSDAQ"})
+    assert [r["name"] for r in briefing.bottom_breaks(universe, data)] == ["정상"]

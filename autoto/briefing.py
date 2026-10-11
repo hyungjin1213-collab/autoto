@@ -296,14 +296,24 @@ def bottom_break(daily, p=BottomParams()):
 
 
 def bottom_breaks(universe, data, p=BottomParams(), top=10):
-    """기준봉 시가를 이탈한 종목, 기준봉이 최근인 순."""
+    """기준봉 시가를 이탈한 종목, 기준봉이 최근인 순.
+
+    거래정지 기간에는 일봉이 없으므로 '최근 N거래일'은 종목별 봉 개수가 아니라 시장 거래일로 셉니다.
+    마지막 거래일에 거래가 없던(정지 중인) 종목은 가격이 멈춰 있으니 뺍니다.
+    """
+    if not data:
+        return []
+    calendar = sorted(set().union(*(df.index for df in data.values())))
+    latest, cutoff = calendar[-1], calendar[max(len(calendar) - 1 - p.lookback, 0)]
     names = universe.set_index("Code")["Name"]
     rows = []
     for code in universe["Code"]:
-        if code in data:
-            m = bottom_break(data[code], p)
-            if m:
-                rows.append({"code": code, "name": names[code], **m})
+        df = data.get(code)
+        if df is None or df.empty or df.index[-1] < latest:
+            continue
+        m = bottom_break(df, p)
+        if m and pd.Timestamp(m["base_date"]) >= cutoff:
+            rows.append({"code": code, "name": names[code], **m})
     rows.sort(key=lambda r: r["days_ago"])
     return rows[:top]
 
