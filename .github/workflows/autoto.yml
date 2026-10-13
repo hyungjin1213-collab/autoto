@@ -1,12 +1,10 @@
 name: Autoto
 
+# 정해진 시간 실행은 GitHub 예약(schedule) 대신 바깥 예약 작업이 workflow_dispatch 로 호출합니다.
+# GitHub 예약은 붐비면 몇 시간씩 늦게 시작해서(9시간 지연도 있었음) 브리핑 시간을 맞출 수 없었습니다.
+#   평일 07:38 KST  task=daily    force=false  -> 분석 갱신 + 8시 전후 아침 브리핑
+#   평일 15:44 KST  task=briefing force=false  -> 장 마감 브리핑 (휴장일이면 보내지 않음)
 on:
-  schedule:
-    # 평일 06:47 KST (전날 21:47 UTC): 장 시작 전에 전일까지의 데이터로 갱신 + 아침 브리핑.
-    # GitHub 예약 실행은 붐비면 수십 분~몇 시간 늦게 시작하므로 여유 있게 잡습니다.
-    - cron: "47 21 * * 0-4"
-    # 평일 16:07 KST (07:07 UTC): 장 마감 브리핑만.
-    - cron: "7 7 * * 1-5"
   workflow_dispatch:
     inputs:
       task:
@@ -34,6 +32,11 @@ on:
         description: "rights_offering: 최근 며칠"
         required: false
         default: "365"
+      force:
+        description: "briefing: 휴장일에도 보내기"
+        required: false
+        default: true
+        type: boolean
       extra:
         description: "월봉 조건 추가 옵션 (예: --min-hit 0.8 --max-range 0.3)"
         required: false
@@ -53,7 +56,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 240
     env:
-      TASK: ${{ inputs.task || (github.event.schedule == '7 7 * * 1-5' && 'briefing') || 'daily' }}
+      TASK: ${{ inputs.task || 'daily' }}
       DART_API_KEY: ${{ secrets.DART_API_KEY }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -106,7 +109,7 @@ jobs:
         run: |
           python -m autoto.briefing --session ${{ env.TASK == 'briefing' && 'close' || 'morning' }} \
             --rights-csv .cache/rights_recent/third_party_allotments.csv \
-            ${{ github.event_name == 'workflow_dispatch' && '--force' || '' }}
+            ${{ format('{0}', inputs.force) != 'false' && '--force' || '' }}
 
       - name: Rights offering (DART)
         if: env.TASK == 'daily' || env.TASK == 'rights_offering'

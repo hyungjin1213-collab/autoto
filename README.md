@@ -75,8 +75,12 @@ python -m autoto.briefing --dry-run             # 보내지 않고 화면에 출
 python -m autoto.briefing --session close --max-rsi 35
 ```
 
-GitHub 예약 실행은 붐비면 늦게 시작할 수 있어 아침 브리핑이 8시 넘어 올 수도 있습니다.
-장 마감 브리핑은 휴장일이면 보내지 않습니다.
+정해진 시간 실행은 GitHub 예약 대신 Claude 예약 작업이 워크플로를 호출합니다
+(GitHub 예약은 몇 시간씩 늦게 시작하는 일이 잦았습니다).
+- 평일 07:38 KST: `task=daily, force=false` → 분석 갱신 후 8시 전후 아침 브리핑
+- 평일 15:44 KST: `task=briefing, force=false` → 장 마감 브리핑, 휴장일이면 보내지 않음
+
+Actions 화면에서 직접 실행하면 `force` 기본값이 켜져 있어 휴장일에도 보냅니다.
 
 ## 월봉매매법
 
@@ -124,7 +128,7 @@ python -m autoto.monthly_candle backtest --years 5
    **Settings → Secrets and variables → Actions** 에 `DART_API_KEY` 로 추가합니다.
    키가 없으면 매일 실행에서 유상증자만 건너뜁니다.
 2. **Actions → Autoto → Run workflow** 에서 작업을 고릅니다.
-   - `daily`: 회전율 + 이번 달 월봉 후보 + 유상증자 (평일 07:47 자동 실행)
+   - `daily`: 회전율 + 이번 달 월봉 후보 + 유상증자 + 아침 브리핑 (평일 07:38 자동 실행)
    - `monthly_backtest`: 월봉매매법 백테스트 (전 종목 시세를 받으므로 수십 분 걸립니다)
    - `extra` 칸에 `--min-hit 0.8 --max-range 0.3` 처럼 조건을 바꿔 넣을 수 있습니다.
 3. 결과는 실행 화면의 Artifact와 `output/` 폴더에 올라옵니다.
