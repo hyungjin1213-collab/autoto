@@ -1,3 +1,4 @@
+import pandas as pd
 from autoto import prices
 
 PAGE = """<table class="type_2"><thead><tr>
@@ -70,3 +71,33 @@ def test_daily_cache_refetches_when_earlier_start_requested(tmp_path, monkeypatc
     assert calls == [pd.Timestamp("2026-02-01"), pd.Timestamp("2021-01-01")]
     assert again.index[0] == pd.Timestamp("2026-05-01")
     assert longer.index[0] == pd.Timestamp("2021-01-01") and len(longer) > len(short)
+
+
+def test_naver_quotes_pages_through_industries_and_stocks():
+    def stock(code, close, vol, value, cap):
+        return {"itemCode": code, "stockName": code, "closePrice": close, "accumulatedTradingVolume": vol,
+                "accumulatedTradingValue": value, "marketValue": cap}
+
+    pages = {
+        "https://m.stock.naver.com/api/stocks/industry?page=1&pageSize=50":
+            {"groups": [{"no": 1}, {"no": 2}], "totalCount": 2},
+        "https://m.stock.naver.com/api/stocks/industry/1?page=1&pageSize=50":
+            {"stocks": [stock("005930", "71,000", "12,345,678", "876,543", "4,238,500")]},
+        "https://m.stock.naver.com/api/stocks/industry/2?page=1&pageSize=50":
+            {"stocks": [stock("000660", "200,000", "1,000", "200", "1,456,000")]},
+    }
+    q = prices.naver_quotes(fetch=lambda url: pages[url])
+    assert q.loc["005930", "Close"] == 71000 and q.loc["005930", "Volume"] == 12345678
+    assert q.loc["005930", "Amount"] == 876543e6 and q.loc["005930", "Marcap"] == 4238500e8
+    assert q.loc["000660", "Close"] == 200000
+
+
+def test_fill_quotes_fills_prices_and_missing_shares():
+    listing = pd.DataFrame({"Code": ["A", "B"], "Name": ["에이", "비"], "Market": "KOSPI", "Close": [None, None],
+                            "Volume": [None, None], "Amount": [None, None], "Marcap": [0.0, 0.0],
+                            "Stocks": [1000.0, 0.0]})
+    quotes = pd.DataFrame({"Close": [10.0, 20.0], "Volume": [5.0, 6.0], "Amount": [50.0, 120.0],
+                           "Marcap": [1e4, 4e4]}, index=["A", "B"])
+    got = prices.fill_quotes(listing, quotes).set_index("Code")
+    assert got.loc["A", "Close"] == 10 and got.loc["B", "Amount"] == 120
+    assert got.loc["A", "Stocks"] == 1000 and got.loc["B", "Stocks"] == 2000  # 4e4 / 20

@@ -320,10 +320,15 @@ def bottom_breaks(universe, data, p=BottomParams(), top=10):
 
 def liquid_universe(n=300, min_price=1000):  # n=None 이면 전 종목
     """거래대금 상위 n 종목. 오늘 아침 회전율 결과가 있으면 그 목록을 씁니다."""
+    df = None
     if LISTING_CSV.exists():
         df = pd.read_csv(LISTING_CSV, dtype={"종목코드": str}).rename(columns={
             "종목코드": "Code", "종목명": "Name", "시장": "Market", "종가": "Close", "거래대금": "Amount"})
-    else:
+        for col in ("Close", "Amount"):
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+        if df["Close"].notna().mean() < 0.5:  # 가격이 빠진 목록(네이버 페이지 변경 등)이면 새로 받습니다
+            df = None
+    if df is None:
         df = prices.listing()
     df = df[df["Close"] >= min_price]
     df = df.sort_values("Amount", ascending=False)

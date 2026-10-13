@@ -93,7 +93,72 @@ def naver_listing(markets=("KOSPI", "KOSDAQ"), fetch=None, max_pages=100):
         raise RuntimeError("네이버 시가총액 페이지에서 종목을 읽지 못했습니다")
     df = df[df["Par"].fillna(0) > 0]  # 액면가 0 = ETF/ETN
     df["Amount"] = df["Close"] * df["Volume"]  # 거래대금 근사치 (종가 x 거래량)
+    if df["Close"].notna().mean() < 0.5:
+        # 2026-10-12부터 시가총액 페이지가 현재가·거래량을 '-' 로만 보여줍니다 (새 사이트 이전 중).
+        # 종목코드·상장주식수는 그대로 쓰고 가격은 업종별 JSON에서 채웁니다.
+        print("시가총액 페이지에 가격이 없어 업종별 시세로 채웁니다", file=sys.stderr)
+        df = fill_quotes(df, naver_quotes())
     return df[LISTING_COLUMNS].reset_index(drop=True)
+
+
+NAVER_INDUSTRIES = "https://m.stock.naver.com/api/stocks/industry?page={page}&pageSize=50"
+NAVER_INDUSTRY_STOCKS = "https://m.stock.naver.com/api/stocks/industry/{no}?page={page}&pageSize=50"
+
+
+def _json(url):
+    import json
+    import requests
+
+    for attempt in range(3):
+        try:
+            r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=30)
+            r.raise_for_status()
+            return json.loads(r.content.decode("utf-8"))
+        except Exception:
+            if attempt == 2:
+                raise
+            time.sleep(2 * (attempt + 1))
+
+
+def _paged(url, key, fetch, max_pages=40):
+    items = []
+    for page in range(1, max_pages + 1):
+        data = fetch(url.format(page=page))
+        got = data.get(key) or []
+        items += got
+        total = int(data.get("totalCount") or 0)
+        if not got or len(got) < 50 or (total and len(items) >= total):
+            break
+    return items
+
+
+def naver_quotes(fetch=_json):
+    """업종별 종목 JSON으로 전 종목 현재가·거래량·거래대금·시가총액 (Code 인덱스)."""
+    rows = {}
+    for g in _paged(NAVER_INDUSTRIES, "groups", fetch):
+        url = NAVER_INDUSTRY_STOCKS.replace("{no}", str(g["no"]))
+        for x in _paged(url, "stocks", fetch):
+            num = lambda k: _num(str(x.get(k, "")))  # noqa: E731
+            rows[x["itemCode"]] = {"Close": num("closePrice"), "Volume": num("accumulatedTradingVolume"),
+                                   "Amount": (num("accumulatedTradingValue") or 0) * 1e6,   # 백만원
+                                   "Marcap": (num("marketValue") or 0) * 1e8}             # 억원
+        time.sleep(0.05)
+    if not rows:
+        raise RuntimeError("네이버 업종별 시세를 읽지 못했습니다")
+    return pd.DataFrame.from_dict(rows, orient="index")
+
+
+def fill_quotes(listing_df, quotes):
+    """목록의 비어 있는 가격 열을 quotes 로 채웁니다. 상장주식수가 없으면 시가총액/종가로."""
+    df = listing_df.set_index("Code")
+    q = quotes.reindex(df.index)
+    for col in ("Close", "Volume", "Amount", "Marcap"):
+        if col in q:
+            df[col] = q[col].where(q[col].notna(), df.get(col))
+    if "Stocks" in df:
+        missing = df["Stocks"].fillna(0) <= 0
+        df.loc[missing, "Stocks"] = (df["Marcap"] / df["Close"]).where(missing)
+    return df.reset_index()
 
 
 def listing(markets=("KOSPI", "KOSDAQ")):
