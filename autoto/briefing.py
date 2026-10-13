@@ -365,6 +365,14 @@ def recent_allotments(since, path=RIGHTS_CSV):
     return df.sort_values("접수번호", ascending=False).to_dict("records")
 
 
+def session_day(session, now):
+    """이 브리핑이 다루는 날. 장 마감 브리핑이 밤을 넘겨 늦게 실행돼도(예약 지연) 전날 장을 다룹니다."""
+    day = now.date()
+    if session == "close" and now.hour < 15:
+        day = previous_weekday(day)
+    return day
+
+
 def previous_weekday(day):
     day -= dt.timedelta(days=1)
     while day.weekday() >= 5:
@@ -384,7 +392,8 @@ def group_lines(groups):
 def build_message(session, now, indices, sectors, spikes, oversold_rows, candidates, allotments, errors=(),
                   themes=(), bottoms=None, records=None):
     title = "🌅 장 전 브리핑" if session == "morning" else "🌆 장 마감 브리핑"
-    lines = [f"<b>{title}</b>  {now:%Y-%m-%d} ({'월화수목금토일'[now.weekday()]})"]
+    day = session_day(session, now)
+    lines = [f"<b>{title}</b>  {day:%Y-%m-%d} ({'월화수목금토일'[day.weekday()]})"]
     if indices:
         lines.append(" · ".join(f"{k} {v['close']:,.2f} ({fmt_pct(v['change'], 2)})" for k, v in indices.items()))
 
@@ -479,7 +488,7 @@ def main(argv=None):
     args = parse_args(argv)
     now = dt.datetime.now(KST)
     session = args.session if args.session != "auto" else ("morning" if now.hour < 12 else "close")
-    today = now.date()
+    today = session_day(session, now)
     errors = []
 
     def attempt(label, fn, default):

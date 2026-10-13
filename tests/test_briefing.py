@@ -269,3 +269,15 @@ def test_bottom_breaks_counts_market_days_and_skips_halted_stocks():
         live.index + pd.offsets.BDay(50))}
     universe = pd.DataFrame({"Code": list("ABCD"), "Name": ["정지후", "정지중", "평범", "정상"], "Market": "KOSDAQ"})
     assert [r["name"] for r in briefing.bottom_breaks(universe, data)] == ["정상"]
+
+
+def test_session_day_keeps_previous_session_for_late_close_runs():
+    late = dt.datetime(2026, 10, 13, 1, 40, tzinfo=briefing.KST)   # 월요일 마감 브리핑이 화요일 새벽에 실행
+    assert briefing.session_day("close", late) == dt.date(2026, 10, 12)
+    monday_late = dt.datetime(2026, 10, 12, 2, 0, tzinfo=briefing.KST)  # 금요일 마감분이 월요일 새벽에
+    assert briefing.session_day("close", monday_late) == dt.date(2026, 10, 9)
+    on_time = dt.datetime(2026, 10, 12, 16, 10, tzinfo=briefing.KST)
+    assert briefing.session_day("close", on_time) == dt.date(2026, 10, 12)
+    assert briefing.session_day("morning", late) == dt.date(2026, 10, 13)
+    text = briefing.build_message("close", late, {}, [], [], [], [], [])
+    assert "장 마감 브리핑</b>  2026-10-12 (월)" in text
