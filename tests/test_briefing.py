@@ -281,3 +281,57 @@ def test_session_day_keeps_previous_session_for_late_close_runs():
     assert briefing.session_day("morning", late) == dt.date(2026, 10, 13)
     text = briefing.build_message("close", late, {}, [], [], [], [], [])
     assert "장 마감 브리핑</b>  2026-10-12 (월)" in text
+
+
+def spike_bars(days_ago=8, spike=None, after=(120, 116, 112, 110, 109, 108, 108), after_vol=200.0, n=70):
+    """평평한 100원짜리 일봉에 급등일 하나와 그 뒤 하락 구간."""
+    idx = pd.bdate_range("2026-06-01", periods=n)
+    df = pd.DataFrame({"Open": 100.0, "High": 100.0, "Low": 100.0, "Close": 100.0, "Volume": 1000.0}, index=idx)
+    i = n - 1 - days_ago
+    spike = {"Open": 101.0, "High": 119.0, "Low": 100.0, "Close": 118.0, "Volume": 10_000.0, **(spike or {})}
+    for k, val in spike.items():
+        df.iloc[i, df.columns.get_loc(k)] = val
+    rest = list(after)[:days_ago] + [after[-1]] * max(0, days_ago - len(after))
+    for j, close in enumerate(rest, start=i + 1):
+        df.iloc[j, df.columns.get_loc("Close")] = close
+        df.iloc[j, df.columns.get_loc("Open")] = close
+        df.iloc[j, df.columns.get_loc("Volume")] = 3000.0 if j == i + 1 else after_vol
+    return df
+
+
+def falling_index(df):
+    return pd.Series(range(len(df), 0, -1), index=df.index, dtype=float)
+
+
+def test_pullback_finds_volume_spike_then_quiet_drop_while_index_falls():
+    df = spike_bars()
+    m = briefing.pullback(df, index=falling_index(df))
+    assert m["days_ago"] == 8 and m["spike_gain"] == pytest.approx(18.0) and m["vol_mult"] == pytest.approx(10.0)
+    assert m["drop"] == pytest.approx((108 / 120 - 1) * 100)
+    assert m["dry"] == pytest.approx(2.0)          # 최근 3일 평균 200 / 급등일 10,000
+    assert m["index_change"] < 0 and m["above_open"] > 0
+
+
+def test_pullback_rejections():
+    df = spike_bars()
+    rising = pd.Series(range(1, len(df) + 1), index=df.index, dtype=float)
+    assert briefing.pullback(df, index=rising) is None                                   # 지수는 올랐음
+    assert briefing.pullback(spike_bars(spike={"Volume": 4000.0})) is None              # 거래량 4배
+    assert briefing.pullback(spike_bars(spike={"Close": 112.0, "High": 112.0},
+                                        after=(112, 111, 110, 106))) is None            # +12% 급등 아님
+    assert briefing.pullback(spike_bars(after_vol=5000.0)) is None                      # 거래량이 안 줄었음
+    assert briefing.pullback(spike_bars(after=(120, 110, 100, 99, 99))) is None         # 급등일 시가(101) 이탈
+    assert briefing.pullback(spike_bars(after=(119, 118, 117, 117))) is None            # 고점 대비 -5% 미만
+    assert briefing.pullback(spike_bars(days_ago=25)) is None                           # 20거래일 밖
+
+
+def test_pullbacks_uses_market_index_and_formats_message():
+    data = {"A": spike_bars(), "B": spike_bars(days_ago=4, after=(120, 113, 110, 108))}
+    universe = pd.DataFrame({"Code": ["A", "B"], "Name": ["에이", "비"], "Market": ["KOSDAQ", "KOSPI"]})
+    indices = {"KOSDAQ": falling_index(data["A"]), "KOSPI": pd.Series(range(1, len(data["B"]) + 1), index=data["B"].index, dtype=float)}
+    rows = briefing.pullbacks(universe, data, indices)
+    assert [r["name"] for r in rows] == ["에이"]  # 비: 코스피는 올랐음
+    now = dt.datetime(2026, 10, 26, 16, 0, tzinfo=briefing.KST)
+    text = briefing.build_message("close", now, {}, [], [], [], [], [], pulls=rows)
+    assert "🪂 <b>눌림 후보 (급등 후 무거래 하락)</b>" in text
+    assert f"• 에이 {rows[0]['spike_date']:%m/%d} +18.0%·10배 → 고점 대비 -10.0%, 거래량 2%, 코스닥 " in text

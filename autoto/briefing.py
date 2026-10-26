@@ -8,6 +8,8 @@
   - 거래량 바닥 시가 이탈 (전 종목): 최근 40거래일 안에 바닥권에서 평소 8배 거래량의 꽉 찬
     장대양봉(기준봉)이 나왔는데, 지금 주가가 그 기준봉의 시가 아래로 내려온 종목
   - 상장 이래 최대 거래량 (전 종목): 마지막 거래일 거래량이 그 종목 역사상 최대
+  - 눌림 후보 (전 종목): 최근 20거래일 안에 거래량이 터지며 급등한 뒤, 지수가 밀리는 동안
+    거래량 없이 내려왔지만 아직 급등일 시가는 지키고 있는 종목
   - 월봉매매 후보와 목표가 도달 여부 (output/monthly_candle/candidates.csv)
   - 새 제3자배정 유상증자 공시 (DART_API_KEY 가 있으면 최근 며칠만 직접 조회)
 
@@ -106,6 +108,11 @@ def index_summary(fetch=http_get):
             last, prev = df["Close"].iloc[-1], df["Close"].iloc[-2]
             out[name] = {"date": df.index[-1].date(), "close": last, "change": (last / prev - 1) * 100}
     return out
+
+
+def index_series(fetch=http_get, count=80):
+    """시장별 지수 종가 시계열 {"KOSPI": Series, "KOSDAQ": Series}."""
+    return {m: parse_fchart(fetch(FCHART.format(count=count, symbol=m)))["Close"] for m in ("KOSPI", "KOSDAQ")}
 
 
 # ---------------------------------------------------------------- 주도 업종·테마
@@ -318,6 +325,76 @@ def bottom_breaks(universe, data, p=BottomParams(), top=10):
     return rows[:top]
 
 
+@dataclass
+class PullbackParams:
+    lookback: int = 20        # 급등일을 찾는 기간 (최근 N거래일)
+    min_gain: float = 0.15    # 급등일 종가 상승률 하한
+    vol_mult: float = 5.0     # 급등일 거래량 >= 직전 vol_avg일 평균 x vol_mult
+    vol_avg: int = 20
+    dry_days: int = 3         # 급등 이후 최근 dry_days일 평균 거래량이
+    dry_ratio: float = 0.25   #   급등일 거래량의 dry_ratio 이하 (거래량 없이 빠짐)
+    min_pullback: float = 0.05  # 급등 이후 최고 종가 대비 하락폭 하한
+
+
+def find_spike(daily, p=PullbackParams()):
+    """최근 p.lookback 거래일 중 (급등 뒤 dry_days일 이상 지난) 가장 최근 급등일 위치. 없으면 None."""
+    o, c, v = (daily[k].to_numpy(dtype=float) for k in ("Open", "Close", "Volume"))
+    n = len(c)
+    for i in range(n - 1 - p.dry_days, max(n - 1 - p.lookback, p.vol_avg) - 1, -1):
+        avg = v[i - p.vol_avg:i].mean()
+        if c[i - 1] > 0 and avg > 0 and c[i] / c[i - 1] - 1 >= p.min_gain and v[i] >= p.vol_mult * avg:
+            return i
+    return None
+
+
+def pullback(daily, p=PullbackParams(), index=None):
+    """급등 후 거래량 없이 눌린 종목이면 정보 dict. index: 그 종목 시장 지수 종가 Series."""
+    if len(daily) < p.vol_avg + p.dry_days + 2:
+        return None
+    i = find_spike(daily, p)
+    if i is None:
+        return None
+    o, c, v = daily["Open"], daily["Close"], daily["Volume"]
+    now, spike_open = float(c.iloc[-1]), float(o.iloc[i])
+    post_high = float(c.iloc[i:].max())
+    drop = now / post_high - 1
+    dry = float(v.iloc[i + 1:].tail(p.dry_days).mean() / v.iloc[i])
+    if drop > -p.min_pullback or now <= spike_open or dry > p.dry_ratio:
+        return None
+    index_change = None
+    if index is not None and len(index):
+        base = index[index.index <= daily.index[i]]
+        if len(base):
+            index_change = float((index.iloc[-1] / base.iloc[-1] - 1) * 100)
+            if index_change >= 0:
+                return None  # 지수가 밀린 게 아니면 '시장 탓 눌림'이 아님
+    return {"spike_date": daily.index[i].date(), "days_ago": len(daily) - 1 - i,
+            "spike_gain": float((c.iloc[i] / c.iloc[i - 1] - 1) * 100),
+            "vol_mult": float(v.iloc[i] / v.iloc[i - p.vol_avg:i].mean()),
+            "drop": drop * 100, "dry": dry * 100, "index_change": index_change,
+            "above_open": float((now / spike_open - 1) * 100), "close": now}
+
+
+def pullbacks(universe, data, indices=None, p=PullbackParams(), top=10):
+    """눌림 후보, 급등일이 최근인 순. 정지 중인 종목은 제외."""
+    if not data:
+        return []
+    calendar = sorted(set().union(*(df.index for df in data.values())))
+    latest, cutoff = calendar[-1], calendar[max(len(calendar) - 1 - p.lookback, 0)]
+    info = universe.set_index("Code")
+    rows = []
+    for code in universe["Code"]:
+        df = data.get(code)
+        if df is None or df.empty or df.index[-1] < latest:
+            continue
+        market = info.loc[code, "Market"] if "Market" in info else None
+        m = pullback(df, p, (indices or {}).get(market))
+        if m and pd.Timestamp(m["spike_date"]) >= cutoff:
+            rows.append({"code": code, "name": info.loc[code, "Name"], "market": market, **m})
+    rows.sort(key=lambda r: (r["days_ago"], r["dry"]))
+    return rows[:top]
+
+
 def liquid_universe(n=300, min_price=1000):  # n=None 이면 전 종목
     """거래대금 상위 n 종목. 오늘 아침 회전율 결과가 있으면 그 목록을 씁니다."""
     df = None
@@ -395,7 +472,7 @@ def group_lines(groups):
 
 
 def build_message(session, now, indices, sectors, spikes, oversold_rows, candidates, allotments, errors=(),
-                  themes=(), bottoms=None, records=None):
+                  themes=(), bottoms=None, records=None, pulls=None):
     title = "🌅 장 전 브리핑" if session == "morning" else "🌆 장 마감 브리핑"
     day = session_day(session, now)
     lines = [f"<b>{title}</b>  {day:%Y-%m-%d} ({'월화수목금토일'[day.weekday()]})"]
@@ -416,6 +493,17 @@ def build_message(session, now, indices, sectors, spikes, oversold_rows, candida
         lines.append(f"• {esc(r['name'])} RSI {r['rsi']:.0f}, 20일선 {r['disparity']:.0f}%, 5일 {fmt_pct(r['return_5d'])}")
     if not oversold_rows:
         lines.append("해당 없음")
+
+    if pulls is not None:
+        lines += ["", "🪂 <b>눌림 후보 (급등 후 무거래 하락)</b>",
+                  "<i>20일 내 +15%·거래량 5배 급등 → 지수 하락 속 거래량 25% 이하로 고점 대비 -5% 이상, 급등일 시가 위</i>"]
+        for r in pulls:
+            idx = f", {'코스피' if r.get('market') == 'KOSPI' else '코스닥'} {fmt_pct(r['index_change'])}" \
+                if r.get("index_change") is not None else ""
+            lines.append(f"• {esc(r['name'])} {r['spike_date']:%m/%d} {fmt_pct(r['spike_gain'])}·{r['vol_mult']:.0f}배"
+                         f" → 고점 대비 {fmt_pct(r['drop'])}, 거래량 {r['dry']:.0f}%{idx}")
+        if not pulls:
+            lines.append("해당 없음")
 
     if records is not None:
         lines += ["", "🚀 <b>상장 이래 최대 거래량</b>"]
@@ -520,6 +608,8 @@ def main(argv=None):
     oversold_rows, _ = attempt("과매도", lambda: oversold(rsi_universe, args.max_rsi, data=data), ([], None))
     bottoms = attempt("거래량 바닥", lambda: bottom_breaks(everyone, data, BottomParams(vol_mult=args.vol_mult)), [])
     records = attempt("최대 거래량", lambda: record_volume_rows(everyone, recs), [])
+    idx_series = attempt("지수 시계열", index_series, {})
+    pulls = attempt("눌림", lambda: pullbacks(everyone, data, idx_series), [])
     candidates = attempt("월봉 후보", monthly_candidates, [])
     since = previous_weekday(today) if session == "morning" else today
     rights_csv = args.rights_csv or RIGHTS_CSV
@@ -531,7 +621,7 @@ def main(argv=None):
         errors.append("유상증자")
 
     text = build_message(session, now, indices, sectors, spikes, oversold_rows, candidates, allotments, errors,
-                         themes, bottoms, records)
+                         themes, bottoms, records, pulls)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     (OUTPUT_DIR / "latest.txt").write_text(text, encoding="utf-8")
 
