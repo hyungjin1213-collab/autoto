@@ -147,8 +147,12 @@ jobs:
           git add -f output/
           if git diff --cached --quiet; then echo "No changes."; exit 0; fi
           git commit -m "Update autoto output (${TASK})"
-          git pull --rebase origin "${{ github.ref_name }}"
-          git push origin HEAD:"${{ github.ref_name }}"
+          # GitHub가 가끔 500/502를 돌려줘서 몇 번 다시 시도합니다.
+          for i in 1 2 3 4; do
+            git pull --rebase origin "${{ github.ref_name }}" && git push origin HEAD:"${{ github.ref_name }}" && exit 0
+            echo "push 실패, $((i * 15))초 후 재시도"; sleep $((i * 15))
+          done
+          exit 1
 
   pages:
     needs: run

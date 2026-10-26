@@ -631,6 +631,7 @@ def main(argv=None):
             print("TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID 가 없어 출력만 합니다.", file=sys.stderr)
         print(text)
         return
+    print(text, file=sys.stderr)  # 실행 로그에도 남겨 무엇을 보냈는지 확인할 수 있게
     send_telegram(token, chat_id, text)
     print(f"텔레그램 전송 완료 ({len(text)}자)", file=sys.stderr)
 
